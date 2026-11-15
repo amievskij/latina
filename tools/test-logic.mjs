@@ -4,7 +4,7 @@ import { norm, toCSV, parseCSV, addDays } from '../js/util.js';
 import { newSrs, schedule, isLearned } from '../js/srs.js';
 import { gramFilled } from '../js/grammar.js';
 import { conjugate } from '../js/verbs.js';
-import { splitLine } from '../js/ocr.js';
+import { splitLine, parseTable, guessGrammar, mergeWords } from '../js/ocr.js';
 import { sanitize, exportJSON, exportCSV, parseImport, mergeImport } from '../js/io.js';
 
 // Поиск без диакритики
@@ -118,10 +118,39 @@ assert.equal(cj('fīō', { inf: 'fierī', conj: 'irr' }).praes, null);
 
 // Разбор строк с фото
 const L = (h, ...ws) => ({ h, words: ws.map(([text, x0, x1]) => ({ text, x0, x1 })) });
-assert.deepEqual(splitLine(L(30, ['amāre,', 10, 110], ['amō', 120, 180], ['lieben', 400, 500])), { latin: 'amāre, amō', de: 'lieben' });
-assert.deepEqual(splitLine(L(30, ['rosa', 10, 80], ['–', 90, 100], ['die', 110, 150], ['Rose', 160, 220])), { latin: 'rosa', de: 'die Rose' });
-assert.deepEqual(splitLine(L(30, ['3.', 0, 20], ['et', 30, 60], ['|', 200, 205], ['und', 300, 360])), { latin: 'et', de: 'und' });
-assert.deepEqual(splitLine(L(30, ['Lektion', 10, 120])), { latin: 'Lektion', de: '' });
+assert.deepEqual(splitLine(L(30, ['amāre,', 10, 110], ['amō', 120, 180], ['lieben', 400, 500])), { latin: 'amāre, amō', info: '', de: 'lieben' });
+assert.deepEqual(splitLine(L(30, ['rosa', 10, 80], ['–', 90, 100], ['die', 110, 150], ['Rose', 160, 220])), { latin: 'rosa', info: '', de: 'die Rose' });
+assert.deepEqual(splitLine(L(30, ['3.', 0, 20], ['et', 30, 60], ['|', 200, 205], ['und', 300, 360])), { latin: 'et', info: '', de: 'und' });
 assert.equal(splitLine(L(30, ['|', 10, 12])), null);
+
+// Таблица из трёх столбцов с колонкой примечаний, заголовком, наклоном и переводом в две строки
+const W = (t, x, y, c = 90) => ({ t, c, x0: x, x1: x + t.length * 9, y0: y - 7 + x * 0.02, y1: y + 7 + x * 0.02 });
+const page = [
+  W('Lektion', 60, 40), W('1', 130, 40), W('Wohnen', 170, 40), W('im', 250, 40), W('alten', 280, 40), W('Rom', 340, 40),
+  W('nam', 60, 100), W('Konj.', 190, 100), W('denn', 380, 100),
+  W('subitö', 60, 130), W('Adv.', 190, 130), W('plótzlich', 380, 130),
+  W('familia', 60, 160), W('familiam', 190, 160), W('f.', 270, 160), W('die', 380, 160), W('Hausgemeinschaft,', 410, 160),
+  W('familiam', 620, 160), W('ist', 700, 160), W('der', 730, 160), W('Akkusativ', 760, 160),
+  W('die', 380, 181), W('Familie', 410, 181), W('von', 620, 181), W('familia.', 650, 181),
+  W('audit', 60, 215), W('er/sie/es', 380, 215), W('hört', 465, 215), W('(zu)', 505, 215), W('D', 620, 215), W('das', 635, 215), W('Audio', 670, 215),
+  W('Kon.', 190, 245), W('aber,', 380, 245), W('sondern', 430, 245),
+  W('tenet', 60, 275), W('er/sie/es', 380, 275), W('hält', 465, 275),
+  W('(hier:', 380, 296), W('im', 440, 296), W('Maul)', 465, 296),
+  W('150', 60, 400),
+];
+assert.deepEqual(parseTable(page, 1000), [
+  { latin: 'nam', info: 'Konj.', de: 'denn' },
+  { latin: 'subitō', info: 'Adv.', de: 'plötzlich' },
+  { latin: 'familia', info: 'familiam f.', de: 'die Hausgemeinschaft, die Familie' },
+  { latin: 'audit', info: '', de: 'er/sie/es hört (zu)' },
+  { latin: '', info: 'Konj.', de: 'aber, sondern' },
+  { latin: 'tenet', info: '', de: 'er/sie/es hält (hier: im Maul)' },
+]);
+assert.deepEqual(guessGrammar('Adv.', 'heute'), { pos: 'adv', gram: {}, note: '' });
+assert.deepEqual(guessGrammar('Konj.', 'denn'), { pos: 'conj', gram: {}, note: '' });
+assert.deepEqual(guessGrammar('familiam f.', 'die Familie'), { pos: 'noun', gram: { gender: 'f' }, note: 'familiam f.' });
+assert.deepEqual(guessGrammar('', 'er/sie/es hört'), { pos: 'verb', gram: {}, note: '' });
+assert.deepEqual(guessGrammar('+ Nom./Akk.', 'sieh da!'), { pos: '', gram: {}, note: '+ Nom./Akk.' });
+assert.equal(mergeWords([W('nam', 60, 100, 80)], [W('nam', 61, 100, 70), W('sed', 60, 200, 90)]).length, 2);
 
 console.log('Все проверки логики пройдены');

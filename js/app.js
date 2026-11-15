@@ -3,10 +3,10 @@ import * as db from './db.js';
 import { GRADES, newSrs, schedule, isNew, isLearned, fmtInterval } from './srs.js';
 import { POS, POS_KEYS, posLabel, posShort, posPlural, fieldsFor, gramFilled, gramPairs, subgroups } from './grammar.js';
 import { TENSES, conjugate } from './verbs.js';
-import { prepare as prepareOcr, recognizePhoto } from './ocr.js';
+import { prepare as prepareOcr, recognizePhoto, guessGrammar } from './ocr.js';
 import { exportJSON, exportCSV, parseImport, mergeImport } from './io.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
@@ -377,7 +377,10 @@ async function saveWord() {
 }
 
 function insertChar(ch) {
+  const active = document.activeElement;
+  if (active && active.matches && active.matches('[data-la]')) S.lastLa = active;
   const el = S.lastLa && document.contains(S.lastLa) ? S.lastLa : $('#f [name=latin]');
+  if (!el) { toast('Сначала нажмите на поле с латинским словом'); return; }
   const a = el.selectionStart ?? el.value.length, b = el.selectionEnd ?? a;
   el.value = el.value.slice(0, a) + ch + el.value.slice(b);
   el.focus();
@@ -401,8 +404,8 @@ function vScan() {
   const la = 'data-la autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false"';
   return `<header class="top"><button class="icon" data-action="back" aria-label="Назад">‹</button><h2>Слова по фото</h2></header>
     <section class="card">
-      <p class="muted">Сфотографируйте печатный список слов: латынь слева, немецкий справа. Снимайте ровно, при хорошем свете,
-        чтобы в кадре был только список. Рукописный текст не распознаётся.</p>
+      <p class="muted">Сфотографируйте страницу со списком слов: латынь слева, немецкий правее. Снимайте сверху, ровно и при хорошем
+        свете. Заголовки и колонку с примечаниями приложение отбросит само. Рукописный текст не распознаётся.</p>
       <label class="btn primary big${busy ? ' off' : ''}" for="photo">Сделать фото или выбрать из галереи</label>
       <input type="file" id="photo" accept="image/*" hidden${busy ? ' disabled' : ''}>
       <div id="scanstat">${scanStat()}</div>
@@ -411,12 +414,17 @@ function vScan() {
       <button class="btn" data-action="scanswap">Поменять столбцы местами</button>
       <label>Тег для всех слов с этого фото
         <input id="scantag" autocomplete="off" autocapitalize="none" placeholder="напр. Lektion 5"></label>
+      <div class="macron sticky" id="macron" aria-label="Гласные с макроном">
+        ${['ā', 'ē', 'ī', 'ō', 'ū', 'ȳ'].map((c) => `<button type="button" data-action="mac">${c}</button>`).join('')}
+        <button type="button" data-action="shift" aria-label="Заглавные" title="Заглавные">⇧</button>
+      </div>
       <div id="scanrows">${sc.rows.map((r, i) => `
         <div class="scanrow" data-i="${i}">
           <input type="checkbox" data-k="on"${r.on ? ' checked' : ''} aria-label="Добавить это слово">
           <div class="pair">
             <input data-k="latin" ${la} value="${esc(r.latin)}" placeholder="латынь" aria-label="Латынь">
             <input data-k="de" lang="de" autocomplete="off" value="${esc(r.de)}" placeholder="немецкий" aria-label="Немецкий">
+            <input data-k="info" class="info" ${la} value="${esc(r.info)}" placeholder="помета из учебника: Adv., Konj., familiam f." aria-label="Грамматическая помета">
             ${r.dup ? '<span class="badge warn">уже есть в словаре</span>' : ''}
           </div>
         </div>`).join('')}</div>
@@ -429,19 +437,21 @@ async function doScan(file) {
   render();
   try {
     const pairs = await recognizePhoto(file, (m) => {
-      if (m.status === 'recognizing text') { sc.msg = 'Распознаю текст…'; sc.pct = m.progress; }
-      else { sc.msg = 'Загружаю модуль распознавания (долго только в первый раз)…'; sc.pct = m.progress || 0; }
+      sc.msg = m.loading ? 'Загружаю модуль распознавания (долго только в первый раз)…' : 'Распознаю текст — это может занять до минуты…';
+      sc.pct = m.progress;
       const box = $('#scanstat');
       if (box) box.innerHTML = scanStat();
     });
     sc.rows = pairs.map((p) => {
       const dup = findDup(p.latin).length > 0;
-      return { latin: p.latin, de: p.de, dup, on: !!p.latin && !!p.de && !dup };
+      return { latin: p.latin, info: p.info || '', de: p.de, dup, on: !!p.latin && !!p.de && !dup };
     });
     sc.state = 'done';
+    const gaps = sc.rows.filter((r) => !r.latin || !r.de).length;
     sc.msg = pairs.length
-      ? `Найдено строк: ${pairs.length}. Проверьте и поправьте их перед добавлением — распознавание ошибается, особенно в знаках долготы.`
-      : 'Текст на фото не найден. Попробуйте снять ближе и ровнее.';
+      ? `Найдено строк: ${pairs.length}. Проверьте их перед добавлением: знаки долготы распознаются не всегда.` +
+        (gaps ? ` Строк, где не хватает латыни или перевода: ${gaps} — допишите их или оставьте без галочки.` : '')
+      : 'Список слов на фото не найден. Снимите страницу целиком, ровно и при хорошем свете.';
   } catch (e) {
     sc.state = 'error';
     sc.msg = 'Не удалось распознать фото: ' + (e && e.message ? e.message : e);
@@ -457,7 +467,8 @@ async function scanAdd() {
     if (!r.on) continue;
     const latin = r.latin.trim(), de = r.de.trim();
     if (!latin || !de) { skipped++; continue; }
-    list.push({ id: uid(), latin, de, ru: '', pos: '', gram: {}, example: '', note: '', tags: [...tags],
+    const g = guessGrammar(r.info, de);
+    list.push({ id: uid(), latin, de, ru: '', pos: g.pos, gram: g.gram, example: '', note: g.note, tags: [...tags],
       createdAt: now + list.length, updatedAt: now, srs: newSrs(t) });
   }
   if (!list.length) { toast('Нет отмеченных строк, где заполнены и латынь, и немецкий'); return; }
@@ -722,6 +733,7 @@ document.addEventListener('mousedown', (e) => { if (e.target.closest('#macron'))
 
 document.addEventListener('focusin', (e) => {
   const el = e.target;
+  if (el.matches && el.matches('#scanrows [data-la]')) { S.lastLa = el; return; }
   if (el.matches && el.matches('#f [data-la]')) {
     S.lastLa = el;
     const bar = $('#macron'), label = el.closest('label');

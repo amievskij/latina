@@ -238,3 +238,5 @@ details.more .tenses { margin-top: 8px; }
 .scanrow input[type=checkbox] { flex: none; width: 28px; height: 28px; min-height: 0; margin-top: 10px; padding: 0; accent-color: var(--accent); }
 .scanrow .pair { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .scanrow .pair input { min-height: 44px; padding: 8px 10px; }
+.macron.sticky { position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 6px 0; }
+.scanrow .pair input.info { min-height: 38px; font-size: 15px; color: var(--muted); }
