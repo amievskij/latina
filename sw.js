@@ -1,7 +1,8 @@
 // Service worker: кладёт всё приложение в кэш, чтобы оно работало без интернета.
 // Словарь лежит в IndexedDB и этим файлом не затрагивается.
 // При каждом обновлении приложения увеличивайте номер версии ниже.
-const CACHE = 'latina-v2';
+// Модуль распознавания фото (vendor/tesseract, ~15 МБ) попадает в кэш при первом использовании.
+const CACHE = 'latina-v3';
 const FILES = [
   './',
   './index.html',
@@ -11,8 +12,10 @@ const FILES = [
   './js/db.js',
   './js/grammar.js',
   './js/io.js',
+  './js/ocr.js',
   './js/srs.js',
   './js/util.js',
+  './js/verbs.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
@@ -43,7 +46,9 @@ self.addEventListener('fetch', (e) => {
       const hit = await cache.match(req, { ignoreSearch: true });
       if (hit) return hit;
       try {
-        return await fetch(req);
+        const res = await fetch(req);
+        if (res.ok && res.type === 'basic') cache.put(req, res.clone());
+        return res;
       } catch (err) {
         if (req.mode === 'navigate') return cache.match('./index.html');
         throw err;

@@ -1,46 +1,49 @@
-// Части речи и грамматические поля карточки.
+// Части речи и грамматические поля карточки. Грамматические термины — на немецком.
 
+// [ключ, название, сокращение, название группы]
 export const POS = [
-  ['noun', 'Существительное', 'сущ.'],
-  ['verb', 'Глагол', 'гл.'],
-  ['adj', 'Прилагательное', 'прил.'],
-  ['prep', 'Предлог', 'предл.'],
-  ['adv', 'Наречие', 'нар.'],
-  ['pron', 'Местоимение', 'мест.'],
-  ['conj', 'Союз', 'союз'],
-  ['num', 'Числительное', 'числ.'],
-  ['part', 'Частица', 'част.'],
-  ['interj', 'Междометие', 'межд.'],
-  ['phrase', 'Выражение', 'выр.'],
+  ['noun', 'Substantiv', 'Subst.', 'Substantive'],
+  ['verb', 'Verb', 'Verb', 'Verben'],
+  ['adj', 'Adjektiv', 'Adj.', 'Adjektive'],
+  ['prep', 'Präposition', 'Präp.', 'Präpositionen'],
+  ['adv', 'Adverb', 'Adv.', 'Adverbien'],
+  ['pron', 'Pronomen', 'Pron.', 'Pronomen'],
+  ['conj', 'Konjunktion', 'Konj.', 'Konjunktionen'],
+  ['num', 'Numerale', 'Num.', 'Numeralia'],
+  ['part', 'Partikel', 'Part.', 'Partikeln'],
+  ['interj', 'Interjektion', 'Interj.', 'Interjektionen'],
+  ['phrase', 'Wendung', 'Wend.', 'Wendungen'],
 ];
 export const POS_KEYS = POS.map((p) => p[0]);
-export const posLabel = (k) => (POS.find((p) => p[0] === k) || [])[1] || '';
-export const posShort = (k) => (POS.find((p) => p[0] === k) || [])[2] || '';
+const posCol = (k, i) => (POS.find((p) => p[0] === k) || [])[i] || '';
+export const posLabel = (k) => posCol(k, 1);
+export const posShort = (k) => posCol(k, 2);
+export const posPlural = (k) => posCol(k, 3);
 
 const STRUCT = {
   noun: [
-    { k: 'gen', label: 'Родительный падеж (Gen. Sg.)', short: 'Gen.', la: true, ph: 'напр. rosae' },
-    { k: 'gender', label: 'Род', short: 'Род', options: [['m', 'm — мужской'], ['f', 'f — женский'], ['n', 'n — средний']] },
-    { k: 'decl', label: 'Склонение', short: 'Склонение', options: [['1', '1-е (a)'], ['2', '2-е (o)'], ['3', '3-е'], ['4', '4-е (u)'], ['5', '5-е (e)'], ['irr', 'неправильное / несклоняемое']] },
+    { k: 'gen', label: 'Genitiv Singular', short: 'Gen. Sg.', la: true, ph: 'z. B. rosae' },
+    { k: 'gender', label: 'Genus', short: 'Genus', options: [['m', 'm — Maskulinum'], ['f', 'f — Femininum'], ['n', 'n — Neutrum']] },
+    { k: 'decl', label: 'Deklination', short: 'Deklination', options: [['1', 'a-Deklination (1.)'], ['2', 'o-Deklination (2.)'], ['3', '3. Deklination'], ['4', 'u-Deklination (4.)'], ['5', 'e-Deklination (5.)'], ['irr', 'unregelmäßig / indeklinabel']] },
   ],
   verb: [
-    { k: 'inf', label: 'Инфинитив', short: 'Inf.', la: true, ph: 'напр. amāre' },
-    { k: 'perf', label: 'Перфект (1 л. ед. ч.)', short: 'Perf.', la: true, ph: 'напр. amāvī' },
-    { k: 'sup', label: 'Супин / PPP', short: 'Sup.', la: true, ph: 'напр. amātum' },
-    { k: 'conj', label: 'Спряжение', short: 'Спряжение', options: [['1', '1-е (ā)'], ['2', '2-е (ē)'], ['3', '3-е (согласное)'], ['3io', '3-е смешанное (-iō)'], ['4', '4-е (ī)'], ['irr', 'неправильный']] },
+    { k: 'inf', label: 'Infinitiv', short: 'Infinitiv', la: true, ph: 'z. B. amāre' },
+    { k: 'perf', label: 'Perfekt (1. Person Singular)', short: 'Perfekt', la: true, ph: 'z. B. amāvī' },
+    { k: 'sup', label: 'Supinum / PPP', short: 'PPP', la: true, ph: 'z. B. amātum' },
+    { k: 'conj', label: 'Konjugation', short: 'Konjugation', options: [['1', 'a-Konjugation (1.)'], ['2', 'e-Konjugation (2.)'], ['3', 'konsonantische Konjugation (3.)'], ['3io', 'gemischte Konjugation (3., -iō)'], ['4', 'i-Konjugation (4.)'], ['irr', 'unregelmäßig']] },
   ],
   adj: [
-    { k: 'm', label: 'Мужской род', short: 'm', la: true, ph: 'напр. bonus' },
-    { k: 'f', label: 'Женский род', short: 'f', la: true, ph: 'напр. bona' },
-    { k: 'n', label: 'Средний род', short: 'n', la: true, ph: 'напр. bonum' },
-    { k: 'comp', label: 'Сравнительная степень', short: 'Komp.', la: true, ph: 'напр. melior' },
-    { k: 'superl', label: 'Превосходная степень', short: 'Superl.', la: true, ph: 'напр. optimus' },
+    { k: 'm', label: 'Maskulinum', short: 'm', la: true, ph: 'z. B. bonus' },
+    { k: 'f', label: 'Femininum', short: 'f', la: true, ph: 'z. B. bona' },
+    { k: 'n', label: 'Neutrum', short: 'n', la: true, ph: 'z. B. bonum' },
+    { k: 'comp', label: 'Komparativ', short: 'Komparativ', la: true, ph: 'z. B. melior' },
+    { k: 'superl', label: 'Superlativ', short: 'Superlativ', la: true, ph: 'z. B. optimus' },
   ],
   prep: [
-    { k: 'case', label: 'С каким падежом', short: 'Падеж', options: [['acc', 'Akkusativ'], ['abl', 'Ablativ'], ['accabl', 'Akkusativ и Ablativ'], ['gen', 'Genitiv']] },
+    { k: 'case', label: 'Kasus', short: 'Kasus', options: [['acc', 'mit Akkusativ'], ['abl', 'mit Ablativ'], ['accabl', 'mit Akkusativ und Ablativ'], ['gen', 'mit Genitiv']] },
   ],
 };
-const FREE = [{ k: 'note', label: 'Грамматическая заметка', short: 'Грамматика', la: true, area: true, ph: 'формы, управление, особенности' }];
+const FREE = [{ k: 'note', label: 'Grammatiknotiz', short: 'Grammatik', la: true, area: true, ph: 'Formen, Rektion, Besonderheiten' }];
 
 export const ALL_GRAM_KEYS = [...new Set([...Object.values(STRUCT).flat(), ...FREE].map((f) => f.k))];
 
@@ -66,4 +69,13 @@ export function gramPairs(w) {
     out.push([f.short, text, !!f.la]);
   }
   return out;
+}
+
+// Подгруппы внутри части речи: глаголы — по спряжению, существительные — по склонению, предлоги — по падежу.
+const SUBGROUP = { noun: 'decl', verb: 'conj', prep: 'case' };
+export function subgroups(pos) {
+  const key = SUBGROUP[pos];
+  if (!key) return null;
+  const field = STRUCT[pos].find((f) => f.k === key);
+  return { key, options: field.options, none: `${field.label} не указано` };
 }

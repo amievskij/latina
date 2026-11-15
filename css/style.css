@@ -203,3 +203,38 @@ fieldset.gram legend .muted { font-weight: 400; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* --- 1.1: группы, формы глаголов, слова по фото --- */
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row2 .btn { padding: 10px 8px; font-size: 16px; }
+a.pill { text-decoration: none; color: var(--text); }
+h4 { margin: 10px 2px 0; font-size: 15px; font-weight: 600; }
+
+.grp summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none;
+  min-height: 52px; padding: 8px 14px; border-radius: 14px; background: var(--soft); font-size: 19px; font-weight: 700;
+}
+.grp summary::-webkit-details-marker { display: none; }
+.grp summary span:first-child::before { content: '▸ '; color: var(--muted); }
+.grp[open] summary span:first-child::before { content: '▾ '; }
+.grp summary .pill { background: var(--card); font-weight: 600; }
+.grp-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 6px; }
+
+.tenses { display: flex; flex-direction: column; gap: 12px; width: 100%; text-align: left; }
+.tense h4 { margin: 0 0 2px; color: var(--accent); }
+.tense table { width: 100%; border-collapse: collapse; font-size: 18px; table-layout: fixed; }
+.tense th { font: 600 12px/1.4 system-ui, sans-serif; color: var(--muted); text-align: left; padding: 2px 0; }
+.tense th:first-child { width: 26px; }
+.tense td { padding: 3px 6px 3px 0; overflow-wrap: anywhere; border-top: 1px solid var(--line); }
+details.more { width: 100%; }
+details.more summary { cursor: pointer; color: var(--accent); font-weight: 600; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+details.more .tenses { margin-top: 8px; }
+
+#scanstat { display: flex; flex-direction: column; gap: 8px; }
+#scanstat .progress { flex: none; }
+.btn.off { opacity: .5; pointer-events: none; }
+#scanrows { display: flex; flex-direction: column; gap: 8px; }
+.scanrow { display: flex; gap: 10px; align-items: flex-start; background: var(--card); border-radius: 14px; padding: 10px; box-shadow: var(--shadow); }
+.scanrow input[type=checkbox] { flex: none; width: 28px; height: 28px; min-height: 0; margin-top: 10px; padding: 0; accent-color: var(--accent); }
+.scanrow .pair { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.scanrow .pair input { min-height: 44px; padding: 8px 10px; }

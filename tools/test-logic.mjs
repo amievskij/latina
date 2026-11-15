@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { norm, toCSV, parseCSV, addDays } from '../js/util.js';
 import { newSrs, schedule, isLearned } from '../js/srs.js';
 import { gramFilled } from '../js/grammar.js';
+import { conjugate } from '../js/verbs.js';
+import { splitLine } from '../js/ocr.js';
 import { sanitize, exportJSON, exportCSV, parseImport, mergeImport } from '../js/io.js';
 
 // Поиск без диакритики
@@ -71,5 +73,55 @@ m = mergeImport(words, [sanitize({ latin: 'ET', de: 'Und', ru: 'и', pos: 'conj'
 assert.deepEqual([m.added, m.updated], [0, 1]);
 assert.equal(m.put[0].ru, 'и');
 assert.equal(m.put[0].id, words[2].id);
+
+// Спряжение
+const cj = (latin, gram) => conjugate({ latin, gram }).tenses;
+let c = cj('amō', { inf: 'amāre', perf: 'amāvī' });
+assert.deepEqual(c.praes, ['amō', 'amās', 'amat', 'amāmus', 'amātis', 'amant']);
+assert.deepEqual(c.impf, ['amābam', 'amābās', 'amābat', 'amābāmus', 'amābātis', 'amābant']);
+assert.deepEqual(c.fut1, ['amābō', 'amābis', 'amābit', 'amābimus', 'amābitis', 'amābunt']);
+assert.deepEqual(c.perf, ['amāvī', 'amāvistī', 'amāvit', 'amāvimus', 'amāvistis', 'amāvērunt']);
+assert.deepEqual(c.plqpf, ['amāveram', 'amāverās', 'amāverat', 'amāverāmus', 'amāverātis', 'amāverant']);
+assert.deepEqual(c.fut2, ['amāverō', 'amāveris', 'amāverit', 'amāverimus', 'amāveritis', 'amāverint']);
+c = cj('moneō', { inf: 'monēre', perf: 'monuī' });
+assert.deepEqual(c.praes, ['moneō', 'monēs', 'monet', 'monēmus', 'monētis', 'monent']);
+assert.deepEqual(c.fut1, ['monēbō', 'monēbis', 'monēbit', 'monēbimus', 'monēbitis', 'monēbunt']);
+c = cj('regō', { inf: 'regere', perf: 'rēxī' });
+assert.deepEqual(c.praes, ['regō', 'regis', 'regit', 'regimus', 'regitis', 'regunt']);
+assert.equal(c.impf[0], 'regēbam');
+assert.deepEqual(c.fut1, ['regam', 'regēs', 'reget', 'regēmus', 'regētis', 'regent']);
+assert.equal(c.perf[5], 'rēxērunt');
+c = cj('capiō', { inf: 'capere', perf: 'cēpī' });
+assert.deepEqual(c.praes, ['capiō', 'capis', 'capit', 'capimus', 'capitis', 'capiunt']);
+assert.equal(c.impf[0], 'capiēbam');
+assert.deepEqual(c.fut1, ['capiam', 'capiēs', 'capiet', 'capiēmus', 'capiētis', 'capient']);
+c = cj('audiō', { inf: 'audīre', perf: 'audīvī' });
+assert.deepEqual(c.praes, ['audiō', 'audīs', 'audit', 'audīmus', 'audītis', 'audiunt']);
+assert.equal(c.fut1[1], 'audiēs');
+// без макронов; без инфинитива, но со спряжением; без данных
+assert.equal(cj('moneo', { inf: 'monere' }).praes[1], 'monēs');
+assert.equal(cj('amo', { conj: '1' }).impf[0], 'amābam');
+assert.equal(cj('amo', {}).praes, null);
+assert.equal(cj('amo', { inf: 'amare' }).perf, null);
+// неправильные
+assert.deepEqual(cj('sum', { inf: 'esse', perf: 'fuī', conj: 'irr' }).praes, ['sum', 'es', 'est', 'sumus', 'estis', 'sunt']);
+assert.equal(cj('sum', { inf: 'esse', perf: 'fuī' }).perf[1], 'fuistī');
+assert.equal(cj('absum', { inf: 'abesse' }).impf[0], 'aberam');
+assert.equal(cj('possum', { inf: 'posse', perf: 'potuī' }).fut1[0], 'poterō');
+assert.deepEqual(cj('eō', { inf: 'īre', perf: 'iī' }).praes, ['eō', 'īs', 'it', 'īmus', 'ītis', 'eunt']);
+assert.equal(cj('redeō', { inf: 'redīre' }).fut1[0], 'redībō');
+assert.equal(cj('ferō', { inf: 'ferre', perf: 'tulī' }).praes[1], 'fers');
+assert.equal(cj('volō', { inf: 'velle', perf: 'voluī' }).praes[2], 'vult');
+assert.equal(cj('volō', { inf: 'volāre' }).praes[2], 'volat');
+assert.equal(cj('hortor', { inf: 'hortārī' }).praes, null);
+assert.equal(cj('fīō', { inf: 'fierī', conj: 'irr' }).praes, null);
+
+// Разбор строк с фото
+const L = (h, ...ws) => ({ h, words: ws.map(([text, x0, x1]) => ({ text, x0, x1 })) });
+assert.deepEqual(splitLine(L(30, ['amāre,', 10, 110], ['amō', 120, 180], ['lieben', 400, 500])), { latin: 'amāre, amō', de: 'lieben' });
+assert.deepEqual(splitLine(L(30, ['rosa', 10, 80], ['–', 90, 100], ['die', 110, 150], ['Rose', 160, 220])), { latin: 'rosa', de: 'die Rose' });
+assert.deepEqual(splitLine(L(30, ['3.', 0, 20], ['et', 30, 60], ['|', 200, 205], ['und', 300, 360])), { latin: 'et', de: 'und' });
+assert.deepEqual(splitLine(L(30, ['Lektion', 10, 120])), { latin: 'Lektion', de: '' });
+assert.equal(splitLine(L(30, ['|', 10, 12])), null);
 
 console.log('Все проверки логики пройдены');

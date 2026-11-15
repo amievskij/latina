@@ -1,17 +1,20 @@
 import { norm, dayStr, addDays, daysBetween, fmtDay, uid, esc, shuffle, saveFile } from './util.js';
 import * as db from './db.js';
 import { GRADES, newSrs, schedule, isNew, isLearned, fmtInterval } from './srs.js';
-import { POS, posLabel, posShort, fieldsFor, gramFilled, gramPairs } from './grammar.js';
+import { POS, POS_KEYS, posLabel, posShort, posPlural, fieldsFor, gramFilled, gramPairs, subgroups } from './grammar.js';
+import { TENSES, conjugate } from './verbs.js';
+import { prepare as prepareOcr, recognizePhoto } from './ocr.js';
 import { exportJSON, exportCSV, parseImport, mergeImport } from './io.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 const S = {
   words: [],
   log: {},                 // { 'YYYY-MM-DD': число ответов }
-  settings: { theme: 'auto', mode: 'la-de' },
+  settings: { theme: 'auto', mode: 'la-de', dictView: 'list' },
+  scan: { state: 'idle', msg: '', pct: 0, rows: [] },
   lastExport: null,
   dict: { q: '', sort: 'date', pos: '', tag: '', nogram: false, limit: 200 },
   session: null,
@@ -76,8 +79,8 @@ function route() {
   return { name, arg: arg ? decodeURIComponent(arg) : '' };
 }
 
-const views = { home: vHome, dict: vDict, word: vWord, add: vForm, edit: vForm, review: vReview, stats: vStats, settings: vSettings };
-const FULLSCREEN = ['add', 'edit', 'review', 'word'];
+const views = { home: vHome, dict: vDict, word: vWord, add: vForm, edit: vForm, review: vReview, stats: vStats, settings: vSettings, scan: vScan };
+const FULLSCREEN = ['add', 'edit', 'review', 'word', 'scan'];
 
 function render() {
   const { name, arg } = route();
@@ -87,6 +90,7 @@ function render() {
   document.body.classList.toggle('no-tabs', FULLSCREEN.includes(name));
   document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === name));
   if (name === 'dict') renderList();
+  if (name === 'scan' && S.scan.state === 'idle') prepareOcr().catch(() => {});
   if (name === 'review') { const i = $('#ans'); if (i) i.focus(); }
   if (name !== 'review') window.scrollTo(0, 0);
 }
@@ -106,6 +110,7 @@ function vHome() {
         <p class="hero-label">Словарь пока пуст.</p>
         <p class="muted">Добавляйте слова по мере изучения — приложение напомнит, когда их повторить.</p>
         <a class="btn primary big" href="#/add">＋ Добавить первое слово</a>
+        <a class="btn big" href="#/scan">Добавить слова по фото</a>
       </section>`;
   }
   return `<header class="top"><h1 class="brand">Latīna</h1>
@@ -119,7 +124,8 @@ function vHome() {
         : `<p class="muted">На сегодня всё повторено.</p>
            <button class="btn big" data-action="practice">Тренировка вне расписания</button>`}
     </section>
-    <a class="btn big" href="#/add">＋ Добавить слово</a>
+    <div class="row2"><a class="btn big" href="#/add">＋ Добавить слово</a>
+      <a class="btn big" href="#/scan">Слова по фото</a></div>
     <p class="muted center">В словаре ${wordsN(total)}${S.log[dayStr()] ? ` · сегодня ответов: ${S.log[dayStr()]}` : ''}</p>`;
 }
 
@@ -145,12 +151,14 @@ function vDict() {
   return `<header class="top"><h2>Словарь</h2><span class="muted" id="cnt"></span></header>
     <input id="q" class="search" type="search" placeholder="Поиск: латынь, немецкий, русский" value="${esc(d.q)}"
       autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false" aria-label="Поиск">
+    <div class="seg">${[['list', 'Список'], ['groups', 'Группы']].map(([k, l]) =>
+      `<button type="button" class="${S.settings.dictView === k ? 'on' : ''}" data-action="dictview" data-view="${k}">${l}</button>`).join('')}</div>
     <div class="filters">
       <select id="fsort" aria-label="Сортировка">
         ${opt('date', 'Сначала новые', d.sort)}${opt('dateAsc', 'Сначала старые', d.sort)}${opt('alpha', 'По алфавиту', d.sort)}
       </select>
-      <select id="fpos" aria-label="Часть речи">
-        ${opt('', 'Все части речи', d.pos)}${POS.map((p) => opt(p[0], p[1], d.pos)).join('')}${opt('none', 'Часть речи не указана', d.pos)}
+      <select id="fpos" aria-label="Wortart">
+        ${opt('', 'Alle Wortarten', d.pos)}${POS.map((p) => opt(p[0], p[1], d.pos)).join('')}${opt('none', 'Wortart не указана', d.pos)}
       </select>
       ${tags.length ? `<select id="ftag" aria-label="Тег">${opt('', 'Все теги', d.tag)}${tags.map((t) => opt(t, t, d.tag)).join('')}</select>` : ''}
       <button type="button" class="chip${d.nogram ? ' on' : ''}" data-action="nogram" aria-pressed="${d.nogram}">Грамматика не заполнена</button>
@@ -169,15 +177,49 @@ function renderList() {
     return;
   }
   if (!list.length) { box.innerHTML = `<p class="empty">Ничего не найдено.</p>`; return; }
-  box.innerHTML = list.slice(0, d.limit).map((w) => `
-    <a class="item" href="#/word/${encodeURIComponent(w.id)}">
+  if (S.settings.dictView === 'groups') { box.innerHTML = groupsHTML(list); return; }
+  box.innerHTML = list.slice(0, d.limit).map(itemHTML).join('') +
+    (list.length > d.limit ? `<button class="btn" data-action="more">Показать ещё (${list.length - d.limit})</button>` : '');
+}
+
+function itemHTML(w) {
+  return `<a class="item" href="#/word/${encodeURIComponent(w.id)}">
       <div class="item-head"><span class="la">${esc(w.latin)}</span>
         ${w.pos ? `<span class="badge">${posShort(w.pos)}</span>` : ''}
-        ${gramFilled(w) ? '' : `<span class="badge warn" >без грамматики</span>`}</div>
+        ${gramFilled(w) ? '' : `<span class="badge warn">без грамматики</span>`}</div>
       <div class="de">${esc(w.de)}</div>
       ${w.ru ? `<div class="ru">${esc(w.ru)}</div>` : ''}
-    </a>`).join('') +
-    (list.length > d.limit ? `<button class="btn" data-action="more">Показать ещё (${list.length - d.limit})</button>` : '');
+    </a>`;
+}
+
+// Группы: по части речи; внутри глаголы — по спряжению, существительные — по склонению, предлоги — по падежу.
+function groupsHTML(list) {
+  return [...POS_KEYS, ''].map((pos) => {
+    const ws = list.filter((w) => (w.pos || '') === pos);
+    if (!ws.length) return '';
+    const sg = subgroups(pos);
+    const body = sg
+      ? [...sg.options, ['', sg.none]].map(([k, label]) => {
+          const sub = ws.filter((w) => ((w.gram && w.gram[sg.key]) || '') === k);
+          return sub.length ? `<h4>${esc(label)} <span class="muted">· ${sub.length}</span></h4>` + sub.map(itemHTML).join('') : '';
+        }).join('')
+      : ws.map(itemHTML).join('');
+    return `<details class="grp" open><summary><span>${pos ? posPlural(pos) : 'Wortart не указана'}</span>
+      <span class="pill">${ws.length}</span></summary><div class="grp-body">${body}</div></details>`;
+  }).join('');
+}
+
+function tensesHTML(w) {
+  if (w.pos !== 'verb') return { cards: '', notes: [] };
+  const { tenses, notes } = conjugate(w);
+  const cards = TENSES.filter(([k]) => tenses[k]).map(([k, name]) => {
+    const f = tenses[k];
+    return `<div class="tense"><h4>${name}</h4><table class="la">
+      <tr><th></th><th>Sg.</th><th>Pl.</th></tr>
+      ${[0, 1, 2].map((i) => `<tr><th>${i + 1}.</th><td>${esc(f[i])}</td><td>${esc(f[i + 3])}</td></tr>`).join('')}
+    </table></div>`;
+  }).join('');
+  return { cards, notes };
 }
 
 // ---------- Карточка слова ----------
@@ -205,10 +247,15 @@ function vWord(id) {
       ${w.ru ? `<div class="w-ru">${esc(w.ru)}</div>` : ''}
     </section>
     <section class="card">
-      <h3>Грамматика</h3>
-      ${gramBlock(w) || `<p class="muted">${w.pos ? 'Формы пока не заполнены.' : 'Часть речи и формы пока не указаны.'}</p>`}
+      <h3>Grammatik</h3>
+      ${gramBlock(w) || `<p class="muted">${w.pos ? 'Формы пока не заполнены.' : 'Wortart и формы пока не указаны.'}</p>`}
       ${gramFilled(w) && fieldsFor(w.pos).every((f) => w.gram[f.k]) ? '' : `<a class="btn" href="#/edit/${eid}">Дописать грамматику</a>`}
     </section>
+    ${w.pos === 'verb' ? ((tn) => `<section class="card"><h3>Formen · Indikativ Aktiv</h3>
+      ${tn.cards ? `<div class="tenses">${tn.cards}</div>` : ''}
+      ${tn.notes.map((n) => `<p class="hint">${esc(n)}</p>`).join('')}
+      ${tn.cards ? `<p class="muted small">Формы построены автоматически по полям Infinitiv, Perfekt и Konjugation — сверяйте с учебником.</p>` : ''}
+    </section>`)(tensesHTML(w)) : ''}
     ${w.example ? `<section class="card"><h3>Пример</h3><p class="la pre">${esc(w.example)}</p></section>` : ''}
     ${w.note ? `<section class="card"><h3>Заметка</h3><p class="pre">${esc(w.note)}</p></section>` : ''}
     ${w.tags.length ? `<div class="tags">${w.tags.map((x) => `<span class="badge">${esc(x)}</span>`).join('')}</div>` : ''}
@@ -223,9 +270,9 @@ function vWord(id) {
 
 function gramHTML(pos, gram = {}) {
   const fs = fieldsFor(pos);
-  if (!fs.length) return `<p class="hint">Грамматику можно дописать позже: укажите часть речи — и появятся нужные поля.</p>`;
+  if (!fs.length) return `<p class="hint">Грамматику можно дописать позже: укажите Wortart — и появятся нужные поля.</p>`;
   const la = 'data-la autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false"';
-  return `<fieldset class="gram"><legend>Грамматика <span class="muted">— по желанию</span></legend>
+  return `<fieldset class="gram"><legend>Grammatik <span class="muted">— по желанию</span></legend>
     ${fs.map((f) => {
       const v = gram[f.k] || '';
       if (f.options) {
@@ -246,7 +293,8 @@ function vForm(id) {
   const la = 'data-la autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false"';
   S.lastLa = null;
   return `<header class="top"><button class="icon" data-action="back" aria-label="Назад">‹</button>
-      <h2>${editing ? 'Изменить слово' : 'Новое слово'}</h2></header>
+      <h2>${editing ? 'Изменить слово' : 'Новое слово'}</h2>
+      ${editing ? '' : '<a class="pill" href="#/scan">По фото</a>'}</header>
     <form id="f" novalidate data-id="${esc(w ? w.id : '')}">
       <label><span>Латинское слово <b class="req">*</b></span>
         <input name="latin" ${la} value="${esc(v.latin)}" placeholder="словарная форма, напр. amō"></label>
@@ -259,7 +307,7 @@ function vForm(id) {
         <input name="de" lang="de" autocomplete="off" value="${esc(v.de)}" placeholder="напр. lieben"></label>
       <label>Русский перевод
         <input name="ru" lang="ru" autocomplete="off" value="${esc(v.ru)}" placeholder="по желанию"></label>
-      <label>Часть речи
+      <label>Wortart (часть речи)
         <select name="pos"><option value="">— укажу позже —</option>
           ${POS.map((p) => `<option value="${p[0]}"${p[0] === v.pos ? ' selected' : ''}>${p[1]}</option>`).join('')}</select></label>
       <div id="gram">${gramHTML(v.pos, v.gram)}</div>
@@ -337,6 +385,89 @@ function insertChar(ch) {
   el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+// ---------- Слова по фото ----------
+
+function scanStat() {
+  const sc = S.scan;
+  if (!sc.msg) return '';
+  return `<p class="${sc.state === 'error' ? 'warnbox' : 'muted'}">${esc(sc.msg)}</p>
+    ${sc.state === 'work' ? `<div class="progress"><i style="width:${Math.round((sc.pct || 0) * 100)}%"></i></div>` : ''}`;
+}
+
+const scanCount = () => S.scan.rows.filter((r) => r.on).length;
+
+function vScan() {
+  const sc = S.scan, busy = sc.state === 'work';
+  const la = 'data-la autocapitalize="none" autocorrect="off" autocomplete="off" spellcheck="false"';
+  return `<header class="top"><button class="icon" data-action="back" aria-label="Назад">‹</button><h2>Слова по фото</h2></header>
+    <section class="card">
+      <p class="muted">Сфотографируйте печатный список слов: латынь слева, немецкий справа. Снимайте ровно, при хорошем свете,
+        чтобы в кадре был только список. Рукописный текст не распознаётся.</p>
+      <label class="btn primary big${busy ? ' off' : ''}" for="photo">Сделать фото или выбрать из галереи</label>
+      <input type="file" id="photo" accept="image/*" hidden${busy ? ' disabled' : ''}>
+      <div id="scanstat">${scanStat()}</div>
+    </section>
+    ${sc.rows.length ? `
+      <button class="btn" data-action="scanswap">Поменять столбцы местами</button>
+      <label>Тег для всех слов с этого фото
+        <input id="scantag" autocomplete="off" autocapitalize="none" placeholder="напр. Lektion 5"></label>
+      <div id="scanrows">${sc.rows.map((r, i) => `
+        <div class="scanrow" data-i="${i}">
+          <input type="checkbox" data-k="on"${r.on ? ' checked' : ''} aria-label="Добавить это слово">
+          <div class="pair">
+            <input data-k="latin" ${la} value="${esc(r.latin)}" placeholder="латынь" aria-label="Латынь">
+            <input data-k="de" lang="de" autocomplete="off" value="${esc(r.de)}" placeholder="немецкий" aria-label="Немецкий">
+            ${r.dup ? '<span class="badge warn">уже есть в словаре</span>' : ''}
+          </div>
+        </div>`).join('')}</div>
+      <div class="bottombar"><button class="btn primary big" id="scanadd" data-action="scanadd">Добавить выбранные (${scanCount()})</button></div>` : ''}`;
+}
+
+async function doScan(file) {
+  const sc = S.scan;
+  Object.assign(sc, { state: 'work', rows: [], msg: 'Готовлю распознавание…', pct: 0 });
+  render();
+  try {
+    const pairs = await recognizePhoto(file, (m) => {
+      if (m.status === 'recognizing text') { sc.msg = 'Распознаю текст…'; sc.pct = m.progress; }
+      else { sc.msg = 'Загружаю модуль распознавания (долго только в первый раз)…'; sc.pct = m.progress || 0; }
+      const box = $('#scanstat');
+      if (box) box.innerHTML = scanStat();
+    });
+    sc.rows = pairs.map((p) => {
+      const dup = findDup(p.latin).length > 0;
+      return { latin: p.latin, de: p.de, dup, on: !!p.latin && !!p.de && !dup };
+    });
+    sc.state = 'done';
+    sc.msg = pairs.length
+      ? `Найдено строк: ${pairs.length}. Проверьте и поправьте их перед добавлением — распознавание ошибается, особенно в знаках долготы.`
+      : 'Текст на фото не найден. Попробуйте снять ближе и ровнее.';
+  } catch (e) {
+    sc.state = 'error';
+    sc.msg = 'Не удалось распознать фото: ' + (e && e.message ? e.message : e);
+  }
+  if (route().name === 'scan') render();
+}
+
+async function scanAdd() {
+  const t = dayStr(), now = Date.now(), tags = parseTags(($('#scantag') || {}).value || '');
+  const list = [];
+  let skipped = 0;
+  for (const r of S.scan.rows) {
+    if (!r.on) continue;
+    const latin = r.latin.trim(), de = r.de.trim();
+    if (!latin || !de) { skipped++; continue; }
+    list.push({ id: uid(), latin, de, ru: '', pos: '', gram: {}, example: '', note: '', tags: [...tags],
+      createdAt: now + list.length, updatedAt: now, srs: newSrs(t) });
+  }
+  if (!list.length) { toast('Нет отмеченных строк, где заполнены и латынь, и немецкий'); return; }
+  await db.putWords(list);
+  S.words.push(...list);
+  S.scan = { state: 'idle', msg: '', pct: 0, rows: [] };
+  toast(`Добавлено: ${wordsN(list.length)}` + (skipped ? `, пропущено без перевода: ${skipped}` : ''), 4000);
+  location.hash = '#/dict';
+}
+
 // ---------- Повторение ----------
 
 function startSession(practice) {
@@ -371,6 +502,7 @@ function checkTyped(input, de) {
 function answerHTML(w, mode) {
   const extra = `${w.ru ? `<div class="w-ru">${esc(w.ru)}</div>` : ''}
     ${gramBlock(w)}
+    ${((c) => (c ? `<details class="more"><summary>Formen · Indikativ Aktiv</summary><div class="tenses">${c}</div></details>` : ''))(tensesHTML(w).cards)}
     ${w.example ? `<p class="la pre ex">${esc(w.example)}</p>` : ''}
     ${w.note ? `<p class="pre muted">${esc(w.note)}</p>` : ''}`;
   if (mode === 'de-la') return `<div class="w-la la">${esc(w.latin)}</div>${extra}`;
@@ -545,6 +677,9 @@ const actions = {
   practice() { startSession(true); location.hash = '#/review'; },
   nogram() { S.dict.nogram = !S.dict.nogram; S.dict.limit = 200; render(); },
   more() { S.dict.limit += 200; renderList(); },
+  dictview(el) { S.settings.dictView = el.dataset.view; saveSettings(); render(); },
+  scanswap() { for (const r of S.scan.rows) [r.latin, r.de] = [r.de, r.latin]; render(); },
+  scanadd() { scanAdd(); },
   mac(el) { insertChar(el.textContent); },
   shift() {
     const bar = $('#macron'), up = bar.classList.toggle('up');
@@ -596,6 +731,14 @@ document.addEventListener('focusin', (e) => {
 
 document.addEventListener('input', (e) => {
   const el = e.target;
+  const srow = el.closest && el.closest('.scanrow');
+  if (srow) {
+    const r = S.scan.rows[Number(srow.dataset.i)];
+    if (r) r[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
+    const btn = $('#scanadd');
+    if (btn) btn.textContent = `Добавить выбранные (${scanCount()})`;
+    return;
+  }
   if (el.id === 'q') { S.dict.q = el.value; S.dict.limit = 200; renderList(); }
   else if (el.name === 'latin') { el.classList.remove('invalid'); showDup(); }
   else if (el.name === 'de') el.classList.remove('invalid');
@@ -611,6 +754,7 @@ document.addEventListener('change', (e) => {
     if (bar && $('#gram').contains(bar)) el.closest('label').before(bar); // не потерять панель при перерисовке
     $('#gram').innerHTML = gramHTML(el.value, readForm().gram);
   } else if (el.id === 'imp' && el.files[0]) doImport(el.files[0]);
+  else if (el.id === 'photo' && el.files[0]) doScan(el.files[0]);
 });
 
 document.addEventListener('submit', (e) => {
