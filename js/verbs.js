@@ -98,7 +98,12 @@ function inferConj(lemma, inf) {
 // Возвращает { tenses: { praes: [6 форм] | null, … }, notes: [строки] }.
 export function conjugate(w) {
   const g = w.gram || {};
-  const lemma = first(w.latin), inf = first(g.inf), perf = first(g.perf);
+  // Заголовок карточки — либо 1-е лицо (amō), либо инфинитив (amāre), как в учебнике.
+  const head = first(w.latin);
+  const headIsInf = /(are|ere|ire|sse|lle|rre)$/.test(plain(head)) && !g.inf;
+  const lemma = first(g.p1) || (headIsInf ? '' : head);
+  const inf = first(g.inf) || (headIsInf ? head : '');
+  const perf = first(g.perf);
   const tenses = {}, notes = [];
   for (const [k] of TENSES) tenses[k] = null;
 

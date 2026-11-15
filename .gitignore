@@ -1,2 +1,3 @@
 .claude/
-tools/_sample*
+tools/_*
+latina-basis*.json

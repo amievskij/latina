@@ -4,7 +4,8 @@ import { norm, toCSV, parseCSV, addDays } from '../js/util.js';
 import { newSrs, schedule, isLearned } from '../js/srs.js';
 import { gramFilled } from '../js/grammar.js';
 import { conjugate } from '../js/verbs.js';
-import { splitLine, parseTable, guessGrammar, mergeWords } from '../js/ocr.js';
+import { splitLine, parseTable, mergeWords } from '../js/ocr.js';
+import { inferGrammar } from '../js/grammar.js';
 import { sanitize, exportJSON, exportCSV, parseImport, mergeImport } from '../js/io.js';
 
 // Поиск без диакритики
@@ -146,11 +147,31 @@ assert.deepEqual(parseTable(page, 1000), [
   { latin: '', info: 'Konj.', de: 'aber, sondern' },
   { latin: 'tenet', info: '', de: 'er/sie/es hält (hier: im Maul)' },
 ]);
-assert.deepEqual(guessGrammar('Adv.', 'heute'), { pos: 'adv', gram: {}, note: '' });
-assert.deepEqual(guessGrammar('Konj.', 'denn'), { pos: 'conj', gram: {}, note: '' });
-assert.deepEqual(guessGrammar('familiam f.', 'die Familie'), { pos: 'noun', gram: { gender: 'f' }, note: 'familiam f.' });
-assert.deepEqual(guessGrammar('', 'er/sie/es hört'), { pos: 'verb', gram: {}, note: '' });
-assert.deepEqual(guessGrammar('+ Nom./Akk.', 'sieh da!'), { pos: '', gram: {}, note: '+ Nom./Akk.' });
+const ig = inferGrammar;
+assert.deepEqual(ig('hodiē', 'Adv.', 'heute'), { pos: 'adv', gram: {}, note: '' });
+assert.deepEqual(ig('nam', 'Konj.', 'denn'), { pos: 'conj', gram: {}, note: '' });
+assert.deepEqual(ig('cum', 'Präp. + Abl.', 'mit'), { pos: 'prep', gram: { case: 'abl' }, note: 'Präp. + Abl.' });
+assert.deepEqual(ig('familia', 'familiam f.', 'die Familie'), { pos: 'noun', gram: { gender: 'f', decl: '1' }, note: 'Akk. familiam' });
+assert.deepEqual(ig('arx', 'arcis f. Gen. Pl. arcium', 'die Festung'), { pos: 'noun', gram: { gen: 'arcis', gender: 'f', decl: '3' }, note: 'Gen. Pl. arcium' });
+assert.deepEqual(ig('thermae', 'thermārum f. Pl.', 'die Thermen'), { pos: 'noun', gram: { gen: 'thermārum', gender: 'f', decl: '1' }, note: 'Pl.' });
+assert.deepEqual(ig('deus', 'deī m.', 'der Gott').gram.decl, '2');
+assert.deepEqual(ig('bonus', '-a, -um', 'gut'), { pos: 'adj', gram: { m: 'bonus', f: 'bona', n: 'bonum' }, note: '' });
+assert.deepEqual(ig('paucī', '-ae, -a Pl.', 'wenige').gram, { m: 'paucī', f: 'paucae', n: 'pauca' });
+assert.deepEqual(ig('noster', '-tra, -trum', 'unser').gram.f, 'nostra');
+assert.deepEqual(ig('miser', 'misera, miserum', 'arm').gram, { m: 'miser', f: 'misera', n: 'miserum' });
+assert.deepEqual(ig('timēre', 'timeō, timuī', 'fürchten'), { pos: 'verb', gram: { p1: 'timeō', perf: 'timuī', conj: '2' }, note: '' });
+assert.deepEqual(ig('capere', 'capiō', 'fangen').gram, { p1: 'capiō', conj: '3io' });
+assert.deepEqual(ig('regere', 'regō, rēxī', 'lenken').gram.conj, '3');
+assert.deepEqual(ig('audīre', 'audiō, audīvī', 'hören').gram.conj, '4');
+assert.deepEqual(ig('abīre', 'abeō', 'weggehen').gram.conj, 'irr');
+assert.deepEqual(ig('fugere', 'fugiō, fūgī + Akk.', 'fliehen'), { pos: 'verb', gram: { p1: 'fugiō', perf: 'fūgī', conj: '3io' }, note: '+ Akk.' });
+assert.equal(ig('exspectat', '', 'er/sie/es erwartet').pos, 'verb');
+assert.deepEqual(ig('ecce!', '+ Nom./Akk.', 'sieh da!'), { pos: '', gram: {}, note: '+ Nom./Akk.' });
+// заголовок-инфинитив, как в учебнике
+assert.deepEqual(cj('timēre', { p1: 'timeō', perf: 'timuī', conj: '2' }).praes, ['timeō', 'timēs', 'timet', 'timēmus', 'timētis', 'timent']);
+assert.equal(cj('capere', { p1: 'capiō', perf: 'cēpī' }).fut1[0], 'capiam');
+assert.equal(cj('esse', { p1: 'sum', perf: 'fuī', conj: 'irr' }).impf[0], 'eram');
+assert.equal(cj('adīre', { p1: 'adeō', perf: 'adiī', conj: 'irr' }).praes[5], 'adeunt');
 assert.equal(mergeWords([W('nam', 60, 100, 80)], [W('nam', 61, 100, 70), W('sed', 60, 200, 90)]).length, 2);
 
 console.log('Все проверки логики пройдены');

@@ -1,12 +1,12 @@
 import { norm, dayStr, addDays, daysBetween, fmtDay, uid, esc, shuffle, saveFile } from './util.js';
 import * as db from './db.js';
 import { GRADES, newSrs, schedule, isNew, isLearned, fmtInterval } from './srs.js';
-import { POS, POS_KEYS, posLabel, posShort, posPlural, fieldsFor, gramFilled, gramPairs, subgroups } from './grammar.js';
+import { POS, POS_KEYS, posLabel, posShort, posPlural, fieldsFor, gramFilled, gramPairs, subgroups, inferGrammar } from './grammar.js';
 import { TENSES, conjugate } from './verbs.js';
-import { prepare as prepareOcr, recognizePhoto, guessGrammar } from './ocr.js';
+import { prepare as prepareOcr, recognizePhoto } from './ocr.js';
 import { exportJSON, exportCSV, parseImport, mergeImport } from './io.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
@@ -467,7 +467,7 @@ async function scanAdd() {
     if (!r.on) continue;
     const latin = r.latin.trim(), de = r.de.trim();
     if (!latin || !de) { skipped++; continue; }
-    const g = guessGrammar(r.info, de);
+    const g = inferGrammar(latin, r.info, de);
     list.push({ id: uid(), latin, de, ru: '', pos: g.pos, gram: g.gram, example: '', note: g.note, tags: [...tags],
       createdAt: now + list.length, updatedAt: now, srs: newSrs(t) });
   }

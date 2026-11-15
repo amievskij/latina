@@ -4,7 +4,7 @@ import { norm, dayStr, uid, toCSV, parseCSV } from './util.js';
 import { newSrs } from './srs.js';
 import { POS, POS_KEYS, ALL_GRAM_KEYS } from './grammar.js';
 
-const CSV_COLS = ['latin', 'de', 'ru', 'pos', 'gen', 'gender', 'decl', 'inf', 'perf', 'sup', 'conj',
+const CSV_COLS = ['latin', 'de', 'ru', 'pos', 'gen', 'gender', 'decl', 'p1', 'inf', 'perf', 'sup', 'conj',
   'm', 'f', 'n', 'comp', 'superl', 'case', 'gram_note', 'example', 'note', 'tags', 'created', 'id'];
 const GRAM_COL = (k) => (k === 'note' ? 'gram_note' : k);
 
