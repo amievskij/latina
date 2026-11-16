@@ -35,7 +35,7 @@ export function schedule(s, grade, today) {
     ease = Math.min(3.0, ease + 0.15);
     reps += 1;
   }
-  return { due: addDaysLocal(today, interval), interval, ease, reps, lapses, last: s.last };
+  return { due: addDaysLocal(today, interval), interval, ease, reps, lapses, last: s.last, first: s.first || null };
 }
 
 export const isNew = (s) => s.reps === 0 && s.lapses === 0;

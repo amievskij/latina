@@ -42,6 +42,7 @@ export function sanitize(r) {
     reps: Math.max(0, Math.round(Number(s.reps) || 0)),
     lapses: Math.max(0, Math.round(Number(s.lapses) || 0)),
     last: Number(s.last) || null,
+    first: /^\d{4}-\d{2}-\d{2}$/.test(s.first) ? s.first : null,
   };
   return {
     id: str(r.id) || uid(), latin, de, ru: str(r.ru), pos, gram,

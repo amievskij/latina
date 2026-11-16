@@ -150,7 +150,9 @@ assert.deepEqual(parseTable(page, 1000), [
 const ig = inferGrammar;
 assert.deepEqual(ig('hodiē', 'Adv.', 'heute'), { pos: 'adv', gram: {}, note: '' });
 assert.deepEqual(ig('nam', 'Konj.', 'denn'), { pos: 'conj', gram: {}, note: '' });
-assert.deepEqual(ig('cum', 'Präp. + Abl.', 'mit'), { pos: 'prep', gram: { case: 'abl' }, note: 'Präp. + Abl.' });
+assert.deepEqual(ig('cum', 'Präp. + Abl.', 'mit'), { pos: 'prep', gram: { case: 'abl' }, note: '' });
+// дневная норма: дата первого знакомства сохраняется при повторениях
+assert.equal(schedule({ ...newSrs(day), first: '2026-11-01' }, 2, day).first, '2026-11-01');
 assert.deepEqual(ig('familia', 'familiam f.', 'die Familie'), { pos: 'noun', gram: { gender: 'f', decl: '1' }, note: 'Akk. familiam' });
 assert.deepEqual(ig('arx', 'arcis f. Gen. Pl. arcium', 'die Festung'), { pos: 'noun', gram: { gen: 'arcis', gender: 'f', decl: '3' }, note: 'Gen. Pl. arcium' });
 assert.deepEqual(ig('thermae', 'thermārum f. Pl.', 'die Thermen'), { pos: 'noun', gram: { gen: 'thermārum', gender: 'f', decl: '1' }, note: 'Pl.' });

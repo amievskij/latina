@@ -116,7 +116,10 @@ export function inferGrammar(latin, info, de) {
   if (/^adv\.?$/i.test(t)) return out('adv');
   if (/^(konj|subj)\.?/i.test(t)) return out('conj', {}, /^(konj|subj)\.?$/i.test(t) ? '' : t);
   const prep = t.match(/^pr[äa]p\.?\s*\+?\s*(akk|abl|gen)?/i);
-  if (prep) return out('prep', prep[1] ? { case: CASES[prep[1].toLowerCase()] } : {}, t);
+  if (prep) {
+    const plainMark = /^pr[äa]p\.?\s*\+\s*(akk|abl|gen)\.?$/i.test(t); // падеж уже записан в поле, заметка не нужна
+    return out('prep', prep[1] ? { case: CASES[prep[1].toLowerCase()] } : {}, plainMark ? '' : t);
+  }
 
   // Прилагательные: «-a, -um», «-ae, -a Pl.», «-tra, -trum», «misera, miserum», «pulcher m., pulchra f., pulchrum n.»
   const suf = t.match(/^-(\p{L}+),\s*-(\p{L}+)\s*(.*)$/u);

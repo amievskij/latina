@@ -6,14 +6,14 @@ import { TENSES, conjugate } from './verbs.js';
 import { prepare as prepareOcr, recognizePhoto } from './ocr.js';
 import { exportJSON, exportCSV, parseImport, mergeImport } from './io.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 const S = {
   words: [],
   log: {},                 // { 'YYYY-MM-DD': число ответов }
-  settings: { theme: 'auto', mode: 'la-de', dictView: 'list' },
+  settings: { theme: 'auto', mode: 'la-de', dictView: 'list', newPerDay: 20 },
   scan: { state: 'idle', msg: '', pct: 0, rows: [] },
   lastExport: null,
   dict: { q: '', sort: 'date', pos: '', tag: '', nogram: false, limit: 200 },
@@ -37,7 +37,23 @@ const plural = (n, one, few, many) => {
   return many;
 };
 const wordsN = (n) => `${n} ${plural(n, 'слово', 'слова', 'слов')}`;
-const dueCount = () => { const t = dayStr(); return S.words.filter((w) => w.srs.due <= t).length; };
+// Что повторять сегодня: все слова, у которых подошёл срок, плюс новые (ещё не повторявшиеся) — но новых
+// не больше дневной нормы, в порядке добавления (для базы из учебника — по урокам).
+function dueToday() {
+  const t = dayStr();
+  const reviews = [], fresh = [];
+  let started = 0;
+  for (const w of S.words) {
+    if (w.srs.first === t) started++;
+    if (w.srs.due > t) continue;
+    (isNew(w.srs) ? fresh : reviews).push(w);
+  }
+  fresh.sort((a, b) => a.createdAt - b.createdAt);
+  const limit = S.settings.newPerDay;
+  const room = limit ? Math.max(0, limit - started) : Infinity;
+  return { reviews, fresh: fresh.slice(0, room), waiting: Math.max(0, fresh.length - room) };
+}
+const dueCount = () => { const d = dueToday(); return d.reviews.length + d.fresh.length; };
 const allTags = () => [...new Set(S.words.flatMap((w) => w.tags))].sort((a, b) => a.localeCompare(b));
 
 const keyCache = new WeakMap();
@@ -103,7 +119,8 @@ function modeSwitch() {
 }
 
 function vHome() {
-  const total = S.words.length, due = dueCount(), st = streak();
+  const today = dueToday();
+  const total = S.words.length, due = today.reviews.length + today.fresh.length, st = streak();
   if (!total) {
     return `<header class="top"><h1 class="brand">Latīna</h1></header>
       <section class="card hero">
@@ -118,6 +135,7 @@ function vHome() {
     <section class="card hero">
       <div class="hero-num">${due}</div>
       <div class="hero-label">${plural(due, 'слово', 'слова', 'слов')} к повторению сегодня</div>
+      ${today.fresh.length || today.waiting ? `<p class="muted small">из них новых: ${today.fresh.length}${today.waiting ? ` · ещё ${today.waiting} новых ждут своей очереди` : ''}</p>` : ''}
       ${modeSwitch()}
       ${due
         ? `<button class="btn primary big" data-action="start">Начать повторение</button>`
@@ -483,8 +501,13 @@ async function scanAdd() {
 
 function startSession(practice) {
   const t = dayStr();
-  let ids = (practice ? S.words : S.words.filter((w) => w.srs.due <= t)).map((w) => w.id);
-  shuffle(ids);
+  let ids;
+  if (practice) ids = shuffle(S.words.map((w) => w.id));
+  else {
+    // Сначала повторение уже знакомых слов вперемешку, затем новые — по порядку.
+    const d = dueToday();
+    ids = [...shuffle(d.reviews.map((w) => w.id)), ...d.fresh.map((w) => w.id)];
+  }
   if (practice) ids = ids.slice(0, 20);
   S.session = { queue: ids, pos: 0, total: ids.length, done: 0, mode: S.settings.mode, practice, revealed: false, typed: null };
 }
@@ -569,8 +592,10 @@ async function grade(g) {
   if (!s || !w || !s.revealed) return;
   if (!s.practice) {
     const t = dayStr();
+    const first = w.srs.first || t; // день первого знакомства со словом — для дневной нормы новых слов
     w.srs = schedule(w.srs, g, t);
     w.srs.last = Date.now();
+    w.srs.first = first;
     w.updatedAt = Date.now();
     S.log[t] = (S.log[t] || 0) + 1;
     await db.putWord(w);
@@ -623,6 +648,12 @@ function vSettings() {
       <h3>Тема</h3>
       <div class="seg">${[['auto', 'Как в системе'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([k, l]) =>
         `<button type="button" class="${th === k ? 'on' : ''}" data-action="theme" data-theme="${k}">${l}</button>`).join('')}</div>
+    </section>
+    <section class="card">
+      <h3>Новых слов в день</h3>
+      <div class="seg">${[[10, '10'], [20, '20'], [40, '40'], [0, 'Без нормы']].map(([k, l]) =>
+        `<button type="button" class="${(S.settings.newPerDay || 0) === k ? 'on' : ''}" data-action="newperday" data-n="${k}">${l}</button>`).join('')}</div>
+      <p class="muted small">Столько ещё не повторявшихся слов приложение даёт за день, по порядку добавления. Слова, у которых подошёл срок повторения, показываются все.</p>
     </section>
     <section class="card">
       <h3>Резервная копия и перенос</h3>
@@ -684,6 +715,7 @@ const actions = {
   back() { if (history.length > 1) history.back(); else location.hash = '#/dict'; },
   mode(el) { S.settings.mode = el.dataset.mode; saveSettings(); render(); },
   theme(el) { S.settings.theme = el.dataset.theme; saveSettings(); applyTheme(); render(); },
+  newperday(el) { S.settings.newPerDay = Number(el.dataset.n); saveSettings(); render(); },
   start() { startSession(false); location.hash = '#/review'; },
   practice() { startSession(true); location.hash = '#/review'; },
   nogram() { S.dict.nogram = !S.dict.nogram; S.dict.limit = 200; render(); },
