@@ -9,7 +9,7 @@ import { UNITS, LESSONS, lessonById, checkForm } from './course.js';
 import { decline, adjForms, CASES } from './nouns.js';
 import { unlockBasis } from './basis.js';
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
@@ -109,13 +109,77 @@ const views = {
 };
 const FULLSCREEN = ['add', 'edit', 'review', 'word', 'scan', 'theory', 'lesson'];
 
-function render() {
+// ---------- Плавные переходы ----------
+// Смена экрана анимируется: вглубь (карточка, урок) — сдвиг справа, назад — слева, между вкладками — короткий
+// сдвиг в сторону вкладки, следующий вопрос в уроке и повторении — тоже сдвиг. Где браузер умеет View Transitions
+// (Chrome, Safari 18+), старый и новый экран плавно сменяют друг друга; в остальных новый экран просто въезжает.
+// Перерисовки внутри экрана (выбор ответа, ввод) не анимируются, чтобы не мешать.
+
+const DEPTH = { home: 0, dict: 0, learn: 0, stats: 0, settings: 0, word: 1, review: 1, scan: 1, add: 1, theory: 1, edit: 2, lesson: 2 };
+const TAB_ORDER = ['home', 'dict', 'learn', 'stats', 'settings'];
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+let lastKey = '', navSeq = 0;
+
+function render(opts) {
+  const { name, arg } = route(), key = `${name}/${arg}`;
+  let kind = (opts && opts.anim) || null;
+  if (lastKey && key !== lastKey) {
+    const prev = lastKey.split('/')[0], a = DEPTH[prev] ?? 0, b = DEPTH[name] ?? 0;
+    if (b > a) kind = 'forward';
+    else if (b < a) kind = 'back';
+    else if (TAB_ORDER.includes(prev) && TAB_ORDER.includes(name)) kind = TAB_ORDER.indexOf(name) > TAB_ORDER.indexOf(prev) ? 'tab-next' : 'tab-prev';
+    else kind = 'fade';
+  }
+  lastKey = key;
+  if (!kind || calm.matches || document.visibilityState === 'hidden') { draw(); return; }
+  const root = document.documentElement;
+  if (document.startViewTransition) {
+    // При быстрых нажатиях новый переход прерывает предыдущий: это нормально, ошибки гасим,
+    // а метку направления снимает только последний переход.
+    const id = ++navSeq;
+    let drawn = false;
+    const once = () => { if (!drawn) { drawn = true; draw(); } };
+    root.dataset.nav = kind;
+    const t = document.startViewTransition(once);
+    t.ready.catch(() => {});
+    t.updateCallbackDone.catch(() => {});
+    t.finished.catch(() => {}).finally(() => { if (navSeq === id) delete root.dataset.nav; });
+    // Браузер начинает переход со следующего кадра. Если кадра нет (приложение свернули в этот момент),
+    // экран всё равно должен смениться — без анимации.
+    setTimeout(() => {
+      if (drawn) return;
+      t.skipTransition();
+      once();
+      if (navSeq === id) delete root.dataset.nav;
+    }, 350);
+  } else {
+    draw();
+    app.classList.remove('enter');
+    void app.offsetWidth; // перезапуск анимации
+    app.dataset.enter = kind;
+    app.classList.add('enter');
+  }
+}
+
+function draw() {
   const { name, arg } = route();
   const view = views[name] || vHome;
   if (name !== 'review') S.session = null;
   if (name !== 'lesson') S.lesson = null;
   if (name !== 'learn') S.learnSel = null;
+  const bar = $('#app .progress i');
+  const was = bar ? bar.style.width : null;
   app.innerHTML = view(arg);
+  // полоса прогресса продолжает движение с прежнего места, а не прыгает
+  const now = $('#app .progress i');
+  if (now && was && now.style.width !== was) {
+    const target = now.style.width;
+    now.style.transition = 'none';
+    now.style.width = was;
+    void now.offsetWidth;
+    now.style.transition = '';
+    now.style.width = target;
+  }
   document.body.classList.toggle('no-tabs', FULLSCREEN.includes(name));
   document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === name));
   if (name === 'dict') renderList();
@@ -655,7 +719,7 @@ async function grade(g) {
   }
   if (g === 0) s.queue.push(w.id); else s.done++;
   s.pos++; s.revealed = false; s.typed = null;
-  render();
+  render({ anim: 'step' });
 }
 
 // ---------- Грамматика: путь уроков ----------
@@ -869,13 +933,22 @@ function lessonMatch(side, i) {
   render();
 }
 
+// Окно урока на пути уезжает вниз, и только потом исчезает.
+function closeSheet() {
+  const sheet = $('.sheet'), bg = $('.sheet-bg');
+  S.learnSel = null;
+  if (!sheet || calm.matches) { render(); return; }
+  sheet.classList.add('closing');
+  if (bg) bg.classList.add('closing');
+  setTimeout(() => { if (!S.learnSel && route().name === 'learn') render(); }, 170);
+}
+
 function lessonNext() {
   const L = S.lesson;
   if (!L) return;
   L.pos++;
   Object.assign(L, { answer: null, result: null, selL: null, matched: [], flash: null });
-  render();
-  window.scrollTo(0, 0);
+  render({ anim: 'step' });
 }
 
 // ---------- Статистика ----------
@@ -1135,8 +1208,14 @@ const actions = {
   reveal() { S.session.revealed = true; render(); },
   grade(el) { grade(Number(el.dataset.g)); },
   export(el) { doExport(el.dataset.kind); },
-  lessonmenu(el) { S.learnSel = S.learnSel === el.dataset.id ? null : el.dataset.id; render(); },
-  lessonclose() { S.learnSel = null; render(); },
+  lessonmenu(el) {
+    if (S.learnSel === el.dataset.id) { closeSheet(); return; }
+    const had = !!S.learnSel;
+    S.learnSel = el.dataset.id;
+    render();
+    if (had) $('.sheet')?.classList.add('swap'); // окно уже было открыто — меняем содержимое без повторного выезда
+  },
+  lessonclose() { closeSheet(); },
   lessonstart(el) {
     const l = lessonById(el.dataset.id);
     if (!l) return;

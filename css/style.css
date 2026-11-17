@@ -349,3 +349,64 @@ table.para tr.hi td, table.para tr.hi th { background: color-mix(in srgb, #58cc0
 .inline-form .btn { flex: none; }
 .btn.on-state { border-color: #58a700; color: #58a700; }
 .node-wrap:has(.node-tip) { margin-top: 30px; }
+
+/* --- 1.6: плавные переходы --- */
+/* Нижнее меню, шапка урока и нижняя кнопка остаются на месте, пока сменяется экран. */
+.tabs { view-transition-name: tabbar; }
+.lesson-top { view-transition-name: lessontop; }
+.bottombar { view-transition-name: bottombar; }
+
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: .3s; animation-timing-function: cubic-bezier(.22, .8, .24, 1); animation-fill-mode: both;
+}
+::view-transition-group(bottombar), ::view-transition-group(lessontop) { animation-duration: .3s; }
+html[data-nav=forward]::view-transition-old(root), html[data-nav=step]::view-transition-old(root) { animation-name: vt-out-left; }
+html[data-nav=forward]::view-transition-new(root), html[data-nav=step]::view-transition-new(root) { animation-name: vt-in-right; }
+html[data-nav=back]::view-transition-old(root) { animation-name: vt-out-right; }
+html[data-nav=back]::view-transition-new(root) { animation-name: vt-in-left; }
+html[data-nav=tab-next]::view-transition-old(root), html[data-nav=tab-prev]::view-transition-old(root) { animation-name: vt-fade-out; animation-duration: .16s; }
+html[data-nav=tab-next]::view-transition-new(root) { animation-name: vt-in-right-short; }
+html[data-nav=tab-prev]::view-transition-new(root) { animation-name: vt-in-left-short; }
+@keyframes vt-out-left { to { transform: translateX(-28%); opacity: 0; } }
+@keyframes vt-in-right { from { transform: translateX(28%); opacity: 0; } }
+@keyframes vt-out-right { to { transform: translateX(28%); opacity: 0; } }
+@keyframes vt-in-left { from { transform: translateX(-28%); opacity: 0; } }
+@keyframes vt-in-right-short { from { transform: translateX(28px); opacity: 0; } }
+@keyframes vt-in-left-short { from { transform: translateX(-28px); opacity: 0; } }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes rise { from { transform: translateY(10px); opacity: 0; } }
+@keyframes sink { to { transform: translateY(100%); } }
+
+/* Запасной вариант без View Transitions: новый экран въезжает. Сдвигаются только обычные блоки —
+   закреплённые внизу кнопки лишь проявляются, иначе на время анимации они «отклеились» бы от края экрана. */
+#app.enter > * { animation: .28s cubic-bezier(.22, .8, .24, 1) both; }
+#app.enter[data-enter=forward] > *, #app.enter[data-enter=step] > *, #app.enter[data-enter=tab-next] > * { animation-name: vt-in-right-short; }
+#app.enter[data-enter=back] > *, #app.enter[data-enter=tab-prev] > * { animation-name: vt-in-left-short; }
+#app.enter[data-enter=fade] > *, #app.enter > :is(.bottombar, .fab, .feedback, .sheet, .sheet-bg) { animation-name: fade-in; }
+
+/* Окно урока: плавно затемняет фон, при закрытии уезжает вниз; при выборе другого урока — без повторного выезда. */
+.sheet-bg { animation: fade-in .2s ease-out; }
+.sheet-bg.closing { animation: fade-out .17s ease-in forwards; }
+.sheet.closing { animation: sink .17s ease-in forwards; }
+.sheet.swap { animation: none; }
+
+/* Мягкие состояния кнопок и вариантов ответа. */
+.btn, .opt, .chip, .seg button, .tabs a, .item, .scanrow {
+  transition: background-color .18s, border-color .18s, color .18s, box-shadow .18s, transform .12s, opacity .2s;
+}
+.node { transition: transform .12s, box-shadow .12s, background-color .2s, outline-color .2s; }
+.opt:active, .chip:active, .item:active { transform: scale(.985); }
+.tabs a svg { transition: transform .2s; }
+.tabs a.on svg { transform: translateY(-2px); }
+
+/* Ответ на карточке повторения проявляется, а не выскакивает. */
+.rv-card hr, .rv-card hr ~ * { animation: rise .26s ease-out both; }
+.rv-card hr ~ :nth-child(n+4) { animation-delay: .04s; }
+.feedback details[open] > :not(summary) { animation: rise .2s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
