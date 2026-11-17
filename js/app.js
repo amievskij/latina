@@ -5,15 +5,23 @@ import { POS, POS_KEYS, posLabel, posShort, posPlural, fieldsFor, gramFilled, gr
 import { TENSES, conjugate } from './verbs.js';
 import { prepare as prepareOcr, recognizePhoto } from './ocr.js';
 import { exportJSON, exportCSV, parseImport, mergeImport } from './io.js';
+import { UNITS, LESSONS, lessonById, checkForm } from './course.js';
+import { decline, adjForms, CASES } from './nouns.js';
+import { unlockBasis } from './basis.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 const S = {
   words: [],
   log: {},                 // { 'YYYY-MM-DD': число ответов }
-  settings: { theme: 'auto', mode: 'la-de', dictView: 'list', newPerDay: 20 },
+  settings: { theme: 'auto', mode: 'la-de', dictView: 'list', newPerDay: 20, remind: { on: false, time: '19:00' } },
+  grammar: { done: {}, xp: 0, days: {} }, // курс грамматики: сколько раз пройден каждый урок, очки опыта
+  lesson: null,
+  learnSel: null,
+  remindMsg: '',
+  basisMsg: '',
   scan: { state: 'idle', msg: '', pct: 0, rows: [] },
   lastExport: null,
   dict: { q: '', sort: 'date', pos: '', tag: '', nogram: false, limit: 200 },
@@ -95,20 +103,36 @@ function route() {
   return { name, arg: arg ? decodeURIComponent(arg) : '' };
 }
 
-const views = { home: vHome, dict: vDict, word: vWord, add: vForm, edit: vForm, review: vReview, stats: vStats, settings: vSettings, scan: vScan };
-const FULLSCREEN = ['add', 'edit', 'review', 'word', 'scan'];
+const views = {
+  home: vHome, dict: vDict, word: vWord, add: vForm, edit: vForm, review: vReview, stats: vStats, settings: vSettings,
+  scan: vScan, learn: vLearn, theory: vTheory, lesson: vLesson,
+};
+const FULLSCREEN = ['add', 'edit', 'review', 'word', 'scan', 'theory', 'lesson'];
 
 function render() {
   const { name, arg } = route();
   const view = views[name] || vHome;
   if (name !== 'review') S.session = null;
+  if (name !== 'lesson') S.lesson = null;
+  if (name !== 'learn') S.learnSel = null;
   app.innerHTML = view(arg);
   document.body.classList.toggle('no-tabs', FULLSCREEN.includes(name));
   document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === name));
   if (name === 'dict') renderList();
   if (name === 'scan' && S.scan.state === 'idle') prepareOcr().catch(() => {});
   if (name === 'review') { const i = $('#ans'); if (i) i.focus(); }
-  if (name !== 'review') window.scrollTo(0, 0);
+  if (name === 'lesson') { const i = $('#lans'); if (i && !i.disabled) i.focus(); }
+  if (name !== 'review' && !(name === 'learn' && S.learnSel)) window.scrollTo(0, 0);
+  updateBadge();
+}
+
+// Число слов к повторению на значке приложения (где телефон это поддерживает).
+function updateBadge() {
+  try {
+    if (!('setAppBadge' in navigator)) return;
+    const n = dueCount();
+    (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+  } catch { /* значок не поддерживается */ }
 }
 
 // ---------- Главная ----------
@@ -126,9 +150,11 @@ function vHome() {
       <section class="card hero">
         <p class="hero-label">Словарь пока пуст.</p>
         <p class="muted">Добавляйте слова по мере изучения — приложение напомнит, когда их повторить.</p>
-        <a class="btn primary big" href="#/add">＋ Добавить первое слово</a>
+        <a class="btn primary big" href="#/settings">Загрузить слова из учебника</a>
+        <a class="btn big" href="#/add">＋ Добавить слово</a>
         <a class="btn big" href="#/scan">Добавить слова по фото</a>
-      </section>`;
+      </section>
+      <a class="btn big" href="#/learn">Уроки грамматики</a>`;
   }
   return `<header class="top"><h1 class="brand">Latīna</h1>
       <span class="pill">Серия: ${st} ${plural(st, 'день', 'дня', 'дней')}</span></header>
@@ -142,6 +168,7 @@ function vHome() {
         : `<p class="muted">На сегодня всё повторено.</p>
            <button class="btn big" data-action="practice">Тренировка вне расписания</button>`}
     </section>
+    ${nextLessonCard()}
     <div class="row2"><a class="btn big" href="#/add">＋ Добавить слово</a>
       <a class="btn big" href="#/scan">Слова по фото</a></div>
     <p class="muted center">В словаре ${wordsN(total)}${S.log[dayStr()] ? ` · сегодня ответов: ${S.log[dayStr()]}` : ''}</p>`;
@@ -274,6 +301,8 @@ function vWord(id) {
       ${tn.notes.map((n) => `<p class="hint">${esc(n)}</p>`).join('')}
       ${tn.cards ? `<p class="muted small">Формы построены автоматически по полям Infinitiv, Perfekt и Konjugation — сверяйте с учебником.</p>` : ''}
     </section>`)(tensesHTML(w)) : ''}
+    ${w.pos === 'noun' ? declHTML(w) : ''}
+    ${w.pos === 'adj' ? adjHTML(w) : ''}
     ${w.example ? `<section class="card"><h3>Пример</h3><p class="la pre">${esc(w.example)}</p></section>` : ''}
     ${w.note ? `<section class="card"><h3>Заметка</h3><p class="pre">${esc(w.note)}</p></section>` : ''}
     ${w.tags.length ? `<div class="tags">${w.tags.map((x) => `<span class="badge">${esc(x)}</span>`).join('')}</div>` : ''}
@@ -282,6 +311,29 @@ function vWord(id) {
       <button class="btn danger" data-action="del" data-id="${esc(w.id)}">Удалить</button>
       <a class="btn primary" href="#/edit/${eid}">Изменить</a>
     </div>`;
+}
+
+// Таблица падежей существительного (у имён собственных — только единственное число).
+function declHTML(w) {
+  const d = decline(w);
+  if (!d) return '';
+  const name = /^\p{Lu}/u.test(w.latin) && d.sg;
+  const head = d.sg && !name ? ['Singular', 'Plural'] : [d.sg ? 'Singular' : 'Plural'];
+  const rows = CASES.map(([, n], i) => `<tr><th>${n}</th>${(d.sg && !name ? [d.sg[i], d.pl[i]] : [d.sg ? d.sg[i] : d.pl[i]])
+    .map((f) => `<td class="la">${esc(f)}</td>`).join('')}</tr>`).join('');
+  return `<section class="card"><h3>Formen · Deklination</h3>
+    <table class="para"><thead><tr><th></th>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted small">Формы построены автоматически по Genitiv, Genus и склонению — сверяйте с учебником.</p></section>`;
+}
+
+function adjHTML(w) {
+  const a = adjForms(w);
+  if (!a) return '';
+  const nums = a.pluralOnly ? ['pl'] : ['sg', 'pl'];
+  const rows = nums.flatMap((n) => CASES.map(([, , s], i) => `<tr><th>${s} ${n === 'sg' ? 'Sg.' : 'Pl.'}</th>${['m', 'f', 'n']
+    .map((g) => `<td class="la">${esc(a[g][n][i])}</td>`).join('')}</tr>`)).join('');
+  return `<section class="card"><h3>Formen · m / f / n</h3>
+    <table class="para"><thead><tr><th></th><th>m</th><th>f</th><th>n</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 
 // ---------- Добавление и правка ----------
@@ -606,6 +658,226 @@ async function grade(g) {
   render();
 }
 
+// ---------- Грамматика: путь уроков ----------
+
+const lessonIdx = (id) => LESSONS.findIndex((l) => l.id === id);
+const lessonLevel = (id) => Math.min(3, S.grammar.done[id] || 0);
+const lessonOpen = (i) => i <= 0 || (S.grammar.done[LESSONS[i - 1].id] || 0) > 0;
+const nextLesson = () => LESSONS.find((l, i) => lessonOpen(i) && !S.grammar.done[l.id]) || null;
+const OFFSETS = [0, 46, 70, 46, 0, -46, -70, -46];
+const LOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+
+function nextLessonCard() {
+  const l = nextLesson();
+  if (!l) return '';
+  return `<a class="card next-lesson" href="#/learn" style="--u:${l.unit.color}">
+    <span class="nl-dot">▶</span><span><small>Грамматика · следующий урок</small><b>${esc(l.title)}</b></span></a>`;
+}
+
+function vLearn() {
+  const g = S.grammar, t = dayStr();
+  const done = LESSONS.filter((l) => g.done[l.id]).length;
+  const next = nextLesson();
+  let k = 0;
+  const units = UNITS.map((u, ui) => `<section class="unit" style="--u:${u.color}">
+      <div class="unit-head"><small>Раздел ${ui + 1}</small><b>${esc(u.title)}</b></div>
+      <div class="path">${u.lessons.map((l) => {
+        const i = lessonIdx(l.id), open = lessonOpen(i), lvl = lessonLevel(l.id);
+        const state = !open ? 'locked' : next && next.id === l.id ? 'current' : lvl ? 'done' : 'open';
+        const icon = state === 'locked' ? LOCK : lvl ? `<span class="stars">${'★'.repeat(lvl)}</span>` : '▶';
+        return `<div class="node-wrap" style="--off:${OFFSETS[k++ % OFFSETS.length]}px">
+          ${state === 'current' ? '<span class="node-tip">Начать</span>' : ''}
+          <button class="node ${state}${S.learnSel === l.id ? ' sel' : ''}" data-action="lessonmenu" data-id="${l.id}">${icon}</button>
+          <span class="node-label">${esc(l.title)}</span></div>`;
+      }).join('')}</div></section>`).join('');
+  const sel = S.learnSel && lessonById(S.learnSel);
+  return `<header class="top"><h2>Грамматика</h2><span class="pill xp">⚡ ${g.xp} XP</span></header>
+    <p class="muted small">Сегодня ${g.days[t] || 0} XP · пройдено уроков: ${done} из ${LESSONS.length}.
+      Упражнения строятся из слов вашего словаря.</p>
+    ${units}
+    ${sel ? lessonSheet(sel) : ''}`;
+}
+
+function lessonSheet(l) {
+  const i = lessonIdx(l.id), open = lessonOpen(i), lvl = lessonLevel(l.id);
+  return `<div class="sheet-bg" data-action="lessonclose"></div>
+    <div class="sheet" style="--u:${l.unit.color}" role="dialog" aria-label="${esc(l.title)}">
+      <small>${esc(l.unit.title)}</small>
+      <h3>${esc(l.title)}</h3>
+      <p class="muted">${esc(l.sub)}</p>
+      ${open ? `<p class="small muted">${lvl ? `Уровень ${lvl} из 3 ${'★'.repeat(lvl)}` : 'Урок ещё не пройден'}${lvl >= 3 ? ' — урок освоен, можно повторять' : ''}</p>
+        <button class="btn primary big" data-action="lessonstart" data-id="${l.id}">${lvl ? 'Повторить урок' : 'Начать урок'} · +10 XP</button>
+        <a class="btn" href="#/theory/${l.id}">Теория</a>`
+      : `<p class="muted">Откроется после урока «${esc(LESSONS[i - 1].title)}».</p>
+        <a class="btn" href="#/theory/${l.id}">Посмотреть теорию</a>`}
+    </div>`;
+}
+
+function vTheory(id) {
+  const l = lessonById(id);
+  if (!l) return `<header class="top"><button class="icon" data-action="back" aria-label="Назад">‹</button><h2>Урок не найден</h2></header>`;
+  const open = lessonOpen(lessonIdx(id));
+  return `<header class="top"><button class="icon" data-action="back" aria-label="Назад">‹</button><h2>${esc(l.title)}</h2></header>
+    <section class="card theory" style="--u:${l.unit.color}">${l.theory()}</section>
+    ${open ? `<div class="bottombar"><button class="btn primary big" data-action="lessonstart" data-id="${l.id}">Начать урок</button></div>` : ''}`;
+}
+
+// ---------- Грамматика: прохождение урока ----------
+
+function newLesson(l) {
+  const queue = l.make(S.words);
+  return { id: l.id, queue, pos: 0, total: queue.length, solved: 0, mistakes: 0, answer: null, result: null,
+    selL: null, matched: [], flash: null, saved: false, xp: 0 };
+}
+
+function vLesson(id) {
+  const l = lessonById(id);
+  if (!l) return `<header class="top"><a class="icon" href="#/learn">✕</a><h2>Урок не найден</h2></header>`;
+  if (!S.lesson || S.lesson.id !== id) S.lesson = newLesson(l);
+  const L = S.lesson, ex = L.queue[L.pos];
+  if (!ex) return lessonDone(l);
+  const pct = Math.round((L.solved / Math.max(1, L.total)) * 100);
+  return `<header class="top lesson-top"><a class="icon" href="#/learn" aria-label="Закрыть урок">✕</a>
+      <div class="progress fat" style="--u:${l.unit.color}"><i style="width:${pct}%"></i></div></header>
+    <section class="ex">
+      <h3 class="ex-title">${esc(ex.title)}</h3>
+      ${ex.prompt ? `<div class="ex-prompt">${ex.prompt}</div>` : ''}
+      ${exBody(ex, L)}
+    </section>
+    ${lessonFooter(ex, L)}`;
+}
+
+function exBody(ex, L) {
+  const locked = !!L.result;
+  if (ex.kind === 'choice') {
+    return `<div class="opts">${ex.options.map((o, i) => {
+      let cls = 'opt' + (ex.laOpts ? ' la' : '');
+      if (L.answer === o) cls += ' on';
+      if (locked && o === ex.answer) cls += ' right';
+      else if (locked && L.answer === o) cls += ' wrong';
+      return `<button class="${cls}" data-action="lpick" data-i="${i}"${locked ? ' disabled' : ''}>${esc(o)}</button>`;
+    }).join('')}</div>`;
+  }
+  if (ex.kind === 'type') {
+    return `<form id="lessonf" autocomplete="off">
+        <input id="lans" class="la${locked ? (L.result === 'bad' ? ' invalid' : ' good') : ''}" data-la value="${esc(L.answer || '')}"
+          placeholder="Латинская форма" autocapitalize="none" autocorrect="off" spellcheck="false"${locked ? ' disabled' : ''}>
+      </form>
+      ${locked ? '' : `<div class="macron" id="macron">${['ā', 'ē', 'ī', 'ō', 'ū'].map((c) => `<button type="button" data-action="mac">${c}</button>`).join('')}</div>
+      <p class="muted small center">Знаки долготы можно не ставить — ответ засчитается, но приложение покажет, где они нужны.</p>`}`;
+  }
+  // match: левый столбец — формы, правый — описания в перемешанном порядке
+  if (!ex.order) ex.order = shuffle(ex.pairs.map((_, i) => i));
+  const btn = (side, i, text) => {
+    const done = L.matched.includes(i), sel = side === 'l' && L.selL === i;
+    const bad = L.flash && L.flash[side === 'l' ? 0 : 1] === i;
+    return `<button class="opt${side === 'l' ? ' la' : ''}${done ? ' gone' : ''}${sel ? ' on' : ''}${bad ? ' wrong' : ''}"
+      data-action="lmatch" data-side="${side}" data-i="${i}"${done ? ' disabled' : ''}>${esc(text)}</button>`;
+  };
+  return `<div class="match">
+    <div>${ex.pairs.map((p, i) => btn('l', i, p[0])).join('')}</div>
+    <div>${ex.order.map((i) => btn('r', i, ex.pairs[i][1])).join('')}</div></div>`;
+}
+
+function lessonFooter(ex, L) {
+  if (!L.result) {
+    if (ex.kind === 'match') return '';
+    const ready = ex.kind === 'choice' ? L.answer != null : !!(L.answer || '').trim();
+    return `<div class="bottombar"><button id="lcheck" class="btn primary big" data-action="lcheck"${ready ? '' : ' disabled'}>Проверить</button></div>`;
+  }
+  const ok = L.result !== 'bad';
+  const head = L.result === 'bad' ? 'Неверно'
+    : L.result === 'macron' ? 'Верно! Обрати внимание на долготу' : pick(['Отлично!', 'Верно!', 'Так держать!', 'Optime!', 'Bene!']);
+  const right = ex.kind === 'match' ? '' : `<p>${ok && L.result !== 'macron' ? 'Ответ' : 'Правильно'}: <b class="la">${esc(ex.answer)}</b></p>`;
+  const explain = ex.explain ? (ok ? `<details><summary>Показать таблицу</summary>${ex.explain}</details>` : ex.explain) : '';
+  return `<div class="feedback ${ok ? 'ok' : 'bad'}">
+      <b class="fb-head">${head}</b>${right}${explain}
+      <button class="btn big" data-action="lnext">${L.pos + 1 >= L.queue.length ? 'Завершить' : 'Дальше'}</button>
+    </div>`;
+}
+
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+function lessonDone(l) {
+  const L = S.lesson;
+  if (!L.saved) saveLesson(L);
+  const acc = Math.round((L.total / Math.max(1, L.total + L.mistakes)) * 100);
+  const lvl = lessonLevel(l.id);
+  const next = nextLesson();
+  return `<section class="done-screen" style="--u:${l.unit.color}">
+      <div class="done-badge">${'★'.repeat(Math.max(1, lvl))}</div>
+      <h2>Урок пройден!</h2>
+      <p class="muted">${esc(l.title)} · уровень ${lvl} из 3</p>
+      <div class="tiles">
+        <div class="tile"><b>+${L.xp}</b><span>XP${L.mistakes ? '' : ' (без ошибок +5)'}</span></div>
+        <div class="tile"><b>${acc}%</b><span>точность</span></div>
+      </div>
+      ${next && next.id !== l.id ? `<p class="muted">Следующий урок: <b>${esc(next.title)}</b></p>` : ''}
+    </section>
+    <div class="bottombar">
+      ${next && next.id !== l.id ? `<button class="btn primary big" data-action="lessonstart" data-id="${next.id}">Следующий урок</button>` : ''}
+      <a class="btn big" href="#/learn">К урокам</a>
+    </div>`;
+}
+
+async function saveLesson(L) {
+  L.saved = true;
+  const g = S.grammar, t = dayStr();
+  L.xp = 10 + (L.mistakes ? 0 : 5);
+  g.done[L.id] = (g.done[L.id] || 0) + 1;
+  g.xp += L.xp;
+  g.days[t] = (g.days[t] || 0) + L.xp;
+  S.log[t] = (S.log[t] || 0) + L.total; // урок грамматики тоже продлевает серию дней
+  await db.setMeta('grammar', g);
+  await db.setMeta('log', S.log);
+}
+
+function lessonCheck() {
+  const L = S.lesson, ex = L && L.queue[L.pos];
+  if (!ex || L.result) return;
+  if (ex.kind === 'choice') {
+    if (L.answer == null) return;
+    L.result = L.answer === ex.answer ? 'ok' : 'bad';
+  } else if (ex.kind === 'type') {
+    const r = checkForm(L.answer, ex.answer);
+    if (!(L.answer || '').trim()) return;
+    L.result = r === 'exact' ? 'ok' : r === 'macron' ? 'macron' : 'bad';
+  }
+  if (L.result === 'bad') {
+    L.mistakes++;
+    L.queue.push({ ...ex, options: ex.options && shuffle([...ex.options]), order: null }); // ошибка — вопрос вернётся в конце
+  } else L.solved++;
+  render();
+}
+
+function lessonMatch(side, i) {
+  const L = S.lesson, ex = L.queue[L.pos];
+  if (L.matched.includes(i)) return;
+  L.flash = null;
+  if (side === 'l') { L.selL = i; render(); return; }
+  if (L.selL == null) return;
+  if (L.selL === i) {
+    L.matched.push(i);
+    L.selL = null;
+    if (L.matched.length === ex.pairs.length) { L.result = ex.miss ? 'okmiss' : 'ok'; L.solved++; }
+  } else {
+    L.flash = [L.selL, i];
+    ex.miss = true;
+    L.selL = null;
+    setTimeout(() => { if (S.lesson === L) { L.flash = null; render(); } }, 700);
+  }
+  render();
+}
+
+function lessonNext() {
+  const L = S.lesson;
+  if (!L) return;
+  L.pos++;
+  Object.assign(L, { answer: null, result: null, selL: null, matched: [], flash: null });
+  render();
+  window.scrollTo(0, 0);
+}
+
 // ---------- Статистика ----------
 
 function vStats() {
@@ -624,6 +896,8 @@ function vStats() {
       ${tile(fresh, 'новых')}
       ${tile(dueCount(), 'к повторению сегодня')}
       ${tile(st, `${plural(st, 'день', 'дня', 'дней')} подряд`)}
+      ${tile(LESSONS.filter((l) => S.grammar.done[l.id]).length + ' / ' + LESSONS.length, 'уроков грамматики')}
+      ${tile(S.grammar.xp, 'XP за уроки')}
     </div>
     <section class="card">
       <h3>Ответы за 14 дней</h3>
@@ -644,6 +918,8 @@ function vSettings() {
     ? `Последняя копия: ${fmtDay(dayStr(new Date(S.lastExport)))}`
     : 'Резервная копия ещё не создавалась';
   return `<header class="top"><h2>Настройки</h2></header>
+    ${basisHTML()}
+    ${remindHTML()}
     <section class="card">
       <h3>Тема</h3>
       <div class="seg">${[['auto', 'Как в системе'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([k, l]) =>
@@ -674,11 +950,117 @@ function vSettings() {
     <p class="muted center small">Latīna ${VERSION} · слов в словаре: ${S.words.length}</p>`;
 }
 
+// ---------- Слова из учебника ----------
+
+function basisHTML() {
+  const n = S.words.filter((w) => String(w.id).startsWith('basis-')).length;
+  return `<section class="card" id="basis">
+      <h3>Слова из учебника</h3>
+      <p class="muted">${n ? `В словаре слов из учебника: ${n}.` : 'Уроки 1–14 и «Salve»: 430 слов с грамматикой и тегами по урокам.'}
+        Повторная загрузка не создаёт дубликатов и не сбрасывает прогресс.</p>
+      <form id="basisf" class="inline-form">
+        <input id="basiscode" placeholder="Кодовое слово" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-label="Кодовое слово">
+        <button class="btn primary">Загрузить</button>
+      </form>
+      ${S.basisMsg ? `<div class="warnbox ok">${esc(S.basisMsg)}</div>` : ''}
+    </section>`;
+}
+
+async function loadBasis(code) {
+  S.basisMsg = 'Загружаю…';
+  render();
+  try {
+    const { words } = parseImport('lehrbuch.json', await unlockBasis(code));
+    const res = mergeImport(S.words, words);
+    if (res.put.length) await db.putWords(res.put);
+    S.words = await db.allWords();
+    S.basisMsg = res.added
+      ? `Готово: добавлено ${wordsN(res.added)}${res.skipped + res.updated ? `, уже были в словаре: ${res.skipped + res.updated}` : ''}. Новые слова будут приходить на повторение по ${S.settings.newPerDay || 'все'} в день, по порядку уроков.`
+      : 'Все слова из учебника уже есть в словаре.';
+  } catch (e) {
+    S.basisMsg = e.message;
+  }
+  render();
+}
+
+// ---------- Напоминания ----------
+
+const canPush = () => 'serviceWorker' in navigator && 'Notification' in window &&
+  typeof ServiceWorkerRegistration !== 'undefined' && 'periodicSync' in ServiceWorkerRegistration.prototype;
+
+function remindHTML() {
+  const r = S.settings.remind;
+  return `<section class="card">
+      <h3>Напоминания</h3>
+      <label>Время напоминания<input type="time" id="remtime" value="${esc(r.time)}"></label>
+      <button class="btn big" data-action="remcal">Напоминание в календаре <small>каждый день в это время — надёжно на Android и iPhone</small></button>
+      ${canPush()
+        ? `<button class="btn big${r.on ? ' on-state' : ''}" data-action="rempush">${r.on ? 'Уведомления включены — выключить' : 'Включить уведомления'}
+            <small>придут, только если сегодня ещё не было повторения</small></button>`
+        : '<p class="muted small">Уведомления от самого приложения этот браузер не поддерживает (на iPhone их нет у приложений без сервера). Календарь работает везде.</p>'}
+      ${S.remindMsg ? `<div class="warnbox ok">${esc(S.remindMsg)}</div>` : ''}
+    </section>`;
+}
+
+function icsText(time) {
+  const [h, m] = time.split(':').map(Number);
+  const start = new Date();
+  start.setHours(h, m, 0, 0);
+  if (start < new Date()) start.setDate(start.getDate() + 1);
+  const p = (n) => String(n).padStart(2, '0');
+  const local = (d) => `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+  const now = new Date();
+  const stamp = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}T${p(now.getUTCHours())}${p(now.getUTCMinutes())}00Z`;
+  const url = location.origin + location.pathname;
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Latina//RU', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+    `UID:latina-daily-${Date.now()}@latina`, `DTSTAMP:${stamp}`, `DTSTART:${local(start)}`, 'DURATION:PT15M', 'RRULE:FREQ=DAILY',
+    'SUMMARY:Latīna: повторить слова', `DESCRIPTION:Повторение слов и урок грамматики.\\n${url}`, `URL:${url}`,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Latīna: повторить слова', 'TRIGGER:PT0M', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+}
+
+async function remindCalendar() {
+  const text = icsText(S.settings.remind.time);
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios) {
+    // На iPhone календарь открывается из файла .ics, открытого в Safari.
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/calendar' }));
+    if (!window.open(url, '_blank')) await saveFile('latina-napominanie.ics', text, 'text/calendar');
+    S.remindMsg = 'Откроется календарь: нажмите «Добавить все», и напоминание будет приходить каждый день.';
+  } else {
+    await saveFile('latina-napominanie.ics', text, 'text/calendar');
+    S.remindMsg = 'Файл latina-napominanie.ics сохранён. Откройте его (из уведомления о загрузке или из «Файлов») и выберите календарь — напоминание будет повторяться каждый день.';
+  }
+  render();
+}
+
+async function remindPush() {
+  const r = S.settings.remind;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (r.on) {
+      await reg.periodicSync.unregister('latina-reminder').catch(() => {});
+      r.on = false;
+      S.remindMsg = 'Уведомления выключены.';
+    } else {
+      if ((await Notification.requestPermission()) !== 'granted') throw new Error('Без разрешения на уведомления напоминать не получится. Его можно дать в настройках телефона для этого приложения.');
+      await reg.periodicSync.register('latina-reminder', { minInterval: 3 * 60 * 60 * 1000 });
+      r.on = true;
+      S.remindMsg = `Уведомления включены. Android проверяет словарь в фоне несколько раз в день (как часто — решает сам телефон) и после ${r.time} напомнит, если сегодня ещё не было повторения. Для точного времени добавьте напоминание в календарь.`;
+    }
+    await saveSettings();
+  } catch (e) {
+    S.remindMsg = e && e.message && /разрешени/.test(e.message) ? e.message
+      : 'Телефон не разрешил фоновую проверку: так бывает, если приложение не установлено на главный экран. Используйте напоминание в календаре.';
+  }
+  render();
+}
+
 async function doExport(kind) {
   if (!S.words.length) { toast('Словарь пуст — экспортировать нечего'); return; }
   const name = `latina-${dayStr()}.${kind}`;
   const ok = kind === 'json'
-    ? await saveFile(name, exportJSON(S.words, S.log), 'application/json')
+    ? await saveFile(name, exportJSON(S.words, S.log, { grammar: S.grammar }), 'application/json')
     : await saveFile(name, exportCSV(S.words), 'text/csv');
   if (!ok) return;
   S.lastExport = Date.now();
@@ -689,7 +1071,14 @@ async function doExport(kind) {
 
 async function doImport(file) {
   try {
-    const { words, log, invalid } = parseImport(file.name, await file.text());
+    const { words, log, grammar, invalid } = parseImport(file.name, await file.text());
+    if (grammar && typeof grammar === 'object') { // прогресс уроков из копии: берётся больший
+      const g = S.grammar;
+      for (const [id, n] of Object.entries(grammar.done || {})) g.done[id] = Math.max(g.done[id] || 0, Number(n) || 0);
+      for (const [d, n] of Object.entries(grammar.days || {})) g.days[d] = Math.max(g.days[d] || 0, Number(n) || 0);
+      g.xp = Math.max(g.xp, Number(grammar.xp) || 0);
+      await db.setMeta('grammar', g);
+    }
     const res = mergeImport(S.words, words);
     if (res.put.length) await db.putWords(res.put);
     if (log) {
@@ -746,6 +1135,25 @@ const actions = {
   reveal() { S.session.revealed = true; render(); },
   grade(el) { grade(Number(el.dataset.g)); },
   export(el) { doExport(el.dataset.kind); },
+  lessonmenu(el) { S.learnSel = S.learnSel === el.dataset.id ? null : el.dataset.id; render(); },
+  lessonclose() { S.learnSel = null; render(); },
+  lessonstart(el) {
+    const l = lessonById(el.dataset.id);
+    if (!l) return;
+    S.lesson = newLesson(l);
+    if (location.hash === `#/lesson/${l.id}`) render(); else location.hash = `#/lesson/${l.id}`;
+  },
+  lpick(el) {
+    const L = S.lesson, ex = L && L.queue[L.pos];
+    if (!ex || L.result) return;
+    L.answer = ex.options[Number(el.dataset.i)];
+    render();
+  },
+  lmatch(el) { lessonMatch(el.dataset.side, Number(el.dataset.i)); },
+  lcheck() { lessonCheck(); },
+  lnext() { lessonNext(); },
+  remcal() { remindCalendar(); },
+  rempush() { remindPush(); },
   async install() {
     if (!S.installEvt) return;
     S.installEvt.prompt();
@@ -765,7 +1173,7 @@ document.addEventListener('mousedown', (e) => { if (e.target.closest('#macron'))
 
 document.addEventListener('focusin', (e) => {
   const el = e.target;
-  if (el.matches && el.matches('#scanrows [data-la]')) { S.lastLa = el; return; }
+  if (el.matches && el.matches('#scanrows [data-la], #lessonf [data-la]')) { S.lastLa = el; return; }
   if (el.matches && el.matches('#f [data-la]')) {
     S.lastLa = el;
     const bar = $('#macron'), label = el.closest('label');
@@ -783,6 +1191,12 @@ document.addEventListener('input', (e) => {
     if (btn) btn.textContent = `Добавить выбранные (${scanCount()})`;
     return;
   }
+  if (el.id === 'lans' && S.lesson) {
+    S.lesson.answer = el.value;
+    const b = $('#lcheck');
+    if (b) b.disabled = !el.value.trim();
+    return;
+  }
   if (el.id === 'q') { S.dict.q = el.value; S.dict.limit = 200; renderList(); }
   else if (el.name === 'latin') { el.classList.remove('invalid'); showDup(); }
   else if (el.name === 'de') el.classList.remove('invalid');
@@ -797,13 +1211,17 @@ document.addEventListener('change', (e) => {
     const bar = $('#macron');
     if (bar && $('#gram').contains(bar)) el.closest('label').before(bar); // не потерять панель при перерисовке
     $('#gram').innerHTML = gramHTML(el.value, readForm().gram);
-  } else if (el.id === 'imp' && el.files[0]) doImport(el.files[0]);
+  } else if (el.id === 'remtime' && el.value) { S.settings.remind.time = el.value; saveSettings(); }
+  else if (el.id === 'imp' && el.files[0]) doImport(el.files[0]);
   else if (el.id === 'photo' && el.files[0]) doScan(el.files[0]);
 });
 
 document.addEventListener('submit', (e) => {
   e.preventDefault();
   if (e.target.id === 'f') saveWord();
+  else if (e.target.id === 'lessonf') {
+    if (S.lesson && S.lesson.result) lessonNext(); else lessonCheck();
+  } else if (e.target.id === 'basisf') loadBasis($('#basiscode').value);
   else if (e.target.id === 'typef') {
     const s = S.session, w = current(), text = $('#ans').value.trim();
     s.typed = { text, ok: checkTyped(text, w.de) };
@@ -813,6 +1231,12 @@ document.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // В уроке Enter нажимает «Проверить» / «Дальше» (для поля ввода это делает форма).
+  if (S.lesson && route().name === 'lesson' && e.key === 'Enter' && !e.target.matches('input, textarea')) {
+    const b = $('[data-action=lnext]') || $('#lcheck');
+    if (b && !b.disabled) { e.preventDefault(); b.click(); }
+    return;
+  }
   const s = S.session;
   if (!s || route().name !== 'review' || e.target.matches('input, textarea')) return;
   if (!s.revealed && s.mode !== 'type' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); actions.reveal(); }
@@ -833,8 +1257,11 @@ async function init() {
   try {
     S.words = await db.allWords();
     S.log = (await db.getMeta('log')) || {};
-    Object.assign(S.settings, (await db.getMeta('settings')) || {});
+    const saved = (await db.getMeta('settings')) || {};
+    Object.assign(S.settings, saved, { remind: { ...S.settings.remind, ...(saved.remind || {}) } });
     S.lastExport = (await db.getMeta('lastExport')) || null;
+    const g = (await db.getMeta('grammar')) || {};
+    S.grammar = { done: g.done || {}, xp: g.xp || 0, days: g.days || {} };
   } catch (e) {
     app.innerHTML = `<section class="card"><h3>Не удалось открыть хранилище</h3>
       <p class="muted">Возможно, браузер работает в приватном режиме. ${esc(e && e.message)}</p></section>`;

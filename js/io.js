@@ -51,8 +51,9 @@ export function sanitize(r) {
   };
 }
 
-export function exportJSON(words, log) {
-  return JSON.stringify({ app: 'latina', version: 1, exportedAt: new Date().toISOString(), words, log }, null, 2);
+// extra — дополнительные разделы копии (например, прогресс уроков грамматики: { grammar }).
+export function exportJSON(words, log, extra = {}) {
+  return JSON.stringify({ app: 'latina', version: 1, exportedAt: new Date().toISOString(), words, log, ...extra }, null, 2);
 }
 
 export function exportCSV(words) {
@@ -71,12 +72,13 @@ export function exportCSV(words) {
 // Разбор файла. Возвращает { words, log, invalid }.
 export function parseImport(fileName, text) {
   const trimmed = text.replace(/^﻿/, '').trim();
-  let raw = [], log = null;
+  let raw = [], log = null, grammar = null;
   if (/\.json$/i.test(fileName) || trimmed[0] === '{' || trimmed[0] === '[') {
     const data = JSON.parse(trimmed);
     raw = Array.isArray(data) ? data : data.words;
     if (!Array.isArray(raw)) throw new Error('В файле нет списка слов');
     if (data.log && typeof data.log === 'object') log = data.log;
+    if (data.grammar && typeof data.grammar === 'object') grammar = data.grammar;
   } else {
     const rows = parseCSV(trimmed);
     if (rows.length < 2) throw new Error('В файле нет строк со словами');
@@ -106,7 +108,7 @@ export function parseImport(fileName, text) {
     const w = r && typeof r === 'object' ? sanitize(r) : null;
     if (w) words.push(w); else invalid++;
   }
-  return { words, log, invalid };
+  return { words, log, grammar, invalid };
 }
 
 const dupKey = (w) => norm(w.latin) + '|' + norm(w.de);

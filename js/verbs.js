@@ -60,6 +60,12 @@ const FIXED = {
     praes: ['mālō', 'māvīs', 'māvult', 'mālumus', 'māvultis', 'mālunt'],
     impf: pre('mālē', BAM), fut1: pre('māl', AM),
   },
+  // dare: a-Konjugation, но с кратким a везде, кроме dās и dā
+  dare: {
+    praes: ['dō', 'dās', 'dat', 'damus', 'datis', 'dant'],
+    impf: pre('dab', ['am', 'ās', 'at', 'āmus', 'ātis', 'ant']),
+    fut1: pre('dab', ['ō', 'is', 'it', 'imus', 'itis', 'unt']),
+  },
 };
 
 // Первая форма из поля («amō, amāre» → «amō»), в нижнем регистре, в составных символах.
@@ -73,6 +79,7 @@ function irregular(lemma, inf) {
   if (l === 'volo' && i === 'velle') return FIXED.volo;
   if (l === 'nolo') return FIXED.nolo;
   if (l === 'malo') return FIXED.malo;
+  if (l === 'do' && (!i || i === 'dare')) return FIXED.dare;
   const withPrefix = (tail, table) => {
     const p = lemma.slice(0, lemma.length - tail);
     return { praes: pre(p, table.praes), impf: pre(p, table.impf), fut1: pre(p, table.fut1) };

@@ -6,6 +6,8 @@ import { gramFilled } from '../js/grammar.js';
 import { conjugate } from '../js/verbs.js';
 import { splitLine, parseTable, mergeWords } from '../js/ocr.js';
 import { inferGrammar } from '../js/grammar.js';
+import { decline, adjForms } from '../js/nouns.js';
+import { LESSONS, checkForm } from '../js/course.js';
 import { sanitize, exportJSON, exportCSV, parseImport, mergeImport } from '../js/io.js';
 
 // Поиск без диакритики
@@ -175,5 +177,46 @@ assert.equal(cj('capere', { p1: 'capiō', perf: 'cēpī' }).fut1[0], 'capiam');
 assert.equal(cj('esse', { p1: 'sum', perf: 'fuī', conj: 'irr' }).impf[0], 'eram');
 assert.equal(cj('adīre', { p1: 'adeō', perf: 'adiī', conj: 'irr' }).praes[5], 'adeunt');
 assert.equal(mergeWords([W('nam', 60, 100, 80)], [W('nam', 61, 100, 70), W('sed', 60, 200, 90)]).length, 2);
+
+// Склонение
+const dn = (latin, gen, gender, decl, note = '') => decline({ latin, pos: 'noun', gram: { gen, gender, decl }, note });
+assert.deepEqual(dn('puella', 'puellae', 'f', '1').sg, ['puella', 'puellae', 'puellae', 'puellam', 'puellā']);
+assert.deepEqual(dn('puella', 'puellae', 'f', '1').pl, ['puellae', 'puellārum', 'puellīs', 'puellās', 'puellīs']);
+assert.deepEqual(dn('ager', 'agrī', 'm', '2').sg, ['ager', 'agrī', 'agrō', 'agrum', 'agrō']);
+assert.deepEqual(dn('templum', 'templī', 'n', '2').pl, ['templa', 'templōrum', 'templīs', 'templa', 'templīs']);
+assert.deepEqual(dn('rēx', 'rēgis', 'm', '3').sg, ['rēx', 'rēgis', 'rēgī', 'rēgem', 'rēge']);
+assert.equal(dn('rēx', 'rēgis', 'm', '3').pl[1], 'rēgum');
+assert.deepEqual(dn('nōmen', 'nōminis', 'n', '3').pl, ['nōmina', 'nōminum', 'nōminibus', 'nōmina', 'nōminibus']);
+assert.equal(dn('nōmen', 'nōminis', 'n', '3').sg[3], 'nōmen');
+assert.equal(dn('urbs', 'urbis', 'f', '3', 'Gen. Pl. urbium').pl[1], 'urbium');
+assert.equal(dn('mors', 'mortis', 'f', '3').pl[1], 'mortium');
+assert.equal(dn('hostis', 'hostis', 'm', '3').pl[1], 'hostium');
+assert.equal(dn('canis', 'canis', 'm', '3').pl[1], 'canum');
+assert.equal(dn('mare', 'maris', 'n', '3').sg[4], 'marī');
+assert.deepEqual(dn('līberī', 'līberōrum', 'm', '2', 'Pl.'), { sg: null, pl: ['līberī', 'līberōrum', 'līberīs', 'līberōs', 'līberīs'], gender: 'm', decl: '2' });
+assert.equal(dn('arx', 'arcis', 'f', '3', 'Gen. Pl. arcium').sg[0], 'arx'); // «Gen. Pl.» в заметке — не «только мн. ч.»
+assert.deepEqual(dn('rēs', 'reī', 'f', '5').sg, ['rēs', 'reī', 'reī', 'rem', 'rē']);
+assert.equal(dn('deus', 'deī', 'm', '2'), null);
+const af = adjForms({ latin: 'pulcher', pos: 'adj', gram: { m: 'pulcher', f: 'pulchra', n: 'pulchrum' } });
+assert.deepEqual(af.m.sg, ['pulcher', 'pulchrī', 'pulchrō', 'pulchrum', 'pulchrō']);
+assert.equal(af.f.pl[3], 'pulchrās');
+assert.equal(af.n.pl[0], 'pulchra');
+
+// Проверка ответа в уроке
+assert.equal(checkForm('amāmus', 'amāmus'), 'exact');
+assert.equal(checkForm(' Amamus ', 'amāmus'), 'macron');
+assert.equal(checkForm('amatis', 'amāmus'), false);
+assert.equal(checkForm('', 'amāmus'), false);
+
+// dare: краткое a
+assert.deepEqual(cj('dare', { p1: 'dō', perf: 'dedī', conj: '1' }).praes, ['dō', 'dās', 'dat', 'damus', 'datis', 'dant']);
+
+// Курс: каждый урок собирается и на пустом словаре
+for (const l of LESSONS) {
+  const ex = l.make([]);
+  assert.ok(ex.length >= 8, l.id);
+  for (const e of ex) if (e.kind === 'choice') assert.equal(e.options.filter((o) => o === e.answer).length, 1, l.id);
+  assert.ok(l.theory().length > 50, l.id);
+}
 
 console.log('Все проверки логики пройдены');
